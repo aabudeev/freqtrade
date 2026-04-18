@@ -4,18 +4,21 @@ import logging
 
 from freqtrade.enums import MarginMode, TradingMode
 from freqtrade.exchange import Exchange
-from freqtrade.exchange.exchange_types import FtHas
+from freqtrade.exchange.exchange_types import FtHas, LeverageTier
 
 
 logger = logging.getLogger(__name__)
+
+# CCXT BingX leaves ``maxLeverage`` empty in leverage tiers; cap avoids absurd 1/mmr values.
+_BINGX_MAX_LEV_APPROX_CAP = 150.0
 
 
 class Bingx(Exchange):
     """
     BingX: spot and USDT-M linear swap (CCXT ``defaultType: swap``).
 
-    Fork: futures path targets the same swap product as ``scripts/bingx_swap_smoke_trade.py``.
-    BingX «standard» futures remain out of scope (see BINGX_FUTURES_GAP_ANALYSIS.md).
+    Fork: USDT-M swap aligns with ``scripts/bingx_swap_smoke_trade.py``. Coin-M / «standard»
+    futures BingX are out of scope for this class.
     """
 
     _ft_has: FtHas = {
@@ -40,3 +43,43 @@ class Bingx(Exchange):
         # Enable when cross-margin swap is verified end-to-end on BingX:
         # (TradingMode.FUTURES, MarginMode.CROSS),
     ]
+
+    def parse_leverage_tier(self, tier: dict) -> LeverageTier:
+        """
+        CCXT unified tiers for BingX swap set ``maxLeverage`` to ``None``; Freqtrade needs a
+        numeric cap per tier for ``get_max_leverage`` / notional limits. Approximate from
+        ``maintenanceMarginRate`` when missing (see CCXT ``parse_market_leverage_tiers``).
+        """
+        info = tier.get("info") or {}
+        max_lev = tier.get("maxLeverage")
+        mmr = tier.get("maintenanceMarginRate")
+        if max_lev is None and mmr is not None:
+            try:
+                mmr_f = float(mmr)
+                if mmr_f > 0:
+                    approx = 1.0 / mmr_f
+                    max_lev = min(max(approx, 1.0), _BINGX_MAX_LEV_APPROX_CAP)
+            except (TypeError, ValueError):
+                max_lev = None
+        if max_lev is None:
+            max_lev = 125.0
+
+        maint_amt = None
+        if "cum" in info:
+            try:
+                maint_amt = float(info["cum"])
+            except (TypeError, ValueError):
+                maint_amt = None
+        elif "maintAmount" in info:
+            try:
+                maint_amt = float(info["maintAmount"])
+            except (TypeError, ValueError):
+                maint_amt = None
+
+        return {
+            "minNotional": float(tier["minNotional"]),
+            "maxNotional": tier.get("maxNotional"),
+            "maintenanceMarginRate": float(mmr) if mmr is not None else 0.0,
+            "maxLeverage": float(max_lev),
+            "maintAmt": maint_amt,
+        }
