@@ -1,5 +1,19 @@
-# Официальный stable + SOCKS: без этого httpx/requests падают при TG_PROXY=socks5://...
-# Сборка идёт без прокси из .env — pip тянет пакеты напрямую.
+# Официальный stable + SOCKS + код из этого репозитория (форк).
+#
+# Раньше был только FROM stable + PySocks — в контейнере всегда чистый апстрим,
+# без bingx futures и прочих правок из локального дерева → ошибка вида
+# «does not support 'isolated' 'futures' on BingX».
+#
+# Сборка: из каталога freqtrade/ → docker compose build (context: . в compose).
+# user_data/ в .dockerignore — в образ не копируется; монтируется volume-ом.
 FROM freqtradeorg/freqtrade:stable
+
+USER root
+COPY --chown=ftuser:ftuser . /freqtrade/fork
+
 USER ftuser
+WORKDIR /freqtrade/fork
+RUN pip install --user --no-cache-dir --upgrade .
+
+WORKDIR /freqtrade
 RUN pip install --user --no-cache-dir socksio "PySocks>=1.7.1"
