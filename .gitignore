@@ -116,3 +116,12 @@ target/
 !config_examples/config_freqai.example.json
 
 docker-compose-*.yml
+
+# Fork-internal (не пушить): заметки, план, контекст для ИИ; см. команду `git add`.
+BINGX_FUTURES_GAP_ANALYSIS.md
+IMPLEMENTATION_PLAN.md
+PROJECT_CONTEXT.md
+PROJECT_SESSION_AND_ROADMAP.md
+CONTRIBUTING.md
+README.md
+.venv-ci/
