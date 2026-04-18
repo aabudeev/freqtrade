@@ -1,7 +1,12 @@
 """Tests for BingX exchange (fork: spot + USDT-M swap)."""
 
+from unittest.mock import MagicMock, PropertyMock
+
+import pytest
+
 from freqtrade.enums import MarginMode, TradingMode
 from freqtrade.exchange import bingx
+from tests.conftest import get_patched_exchange
 
 
 def _bingx_stub():
@@ -71,3 +76,54 @@ def test_bingx_parse_leverage_tier_respects_explicit_max_leverage():
     }
     parsed = ex.parse_leverage_tier(raw)
     assert parsed["maxLeverage"] == 20.0
+
+
+@pytest.mark.usefixtures("init_persistence")
+def test_bingx_get_params_adds_hedged_when_hedge_mode(mocker, default_conf_usdt):
+    default_conf_usdt["trading_mode"] = "futures"
+    default_conf_usdt["margin_mode"] = "isolated"
+    default_conf_usdt["exchange"]["name"] = "bingx"
+    api_mock = MagicMock()
+    type(api_mock).has = PropertyMock(
+        return_value={"setLeverage": True, "fetchPositionMode": True}
+    )
+    ex = get_patched_exchange(mocker, default_conf_usdt, api_mock, exchange="bingx")
+    ex._bingx_current_hedged = True
+    params = ex._get_params("buy", "limit", 5.0, False)
+    assert params.get("hedged") is True
+
+
+@pytest.mark.usefixtures("init_persistence")
+def test_bingx_set_leverage_one_way_uses_both(mocker, default_conf_usdt):
+    default_conf_usdt["dry_run"] = False
+    default_conf_usdt["trading_mode"] = "futures"
+    default_conf_usdt["margin_mode"] = "isolated"
+    default_conf_usdt["exchange"]["name"] = "bingx"
+    api_mock = MagicMock()
+    api_mock.set_leverage = MagicMock(return_value={"ok": True})
+    api_mock.fetch_position_mode = MagicMock(return_value={"hedged": False})
+    type(api_mock).has = PropertyMock(
+        return_value={"setLeverage": True, "fetchPositionMode": True}
+    )
+    ex = get_patched_exchange(mocker, default_conf_usdt, api_mock, exchange="bingx")
+    ex._set_leverage(10, "DOGE/USDT:USDT", accept_fail=False)
+    api_mock.set_leverage.assert_called_once_with(10, "DOGE/USDT:USDT", {"side": "BOTH"})
+
+
+@pytest.mark.usefixtures("init_persistence")
+def test_bingx_set_leverage_hedge_sets_long_and_short(mocker, default_conf_usdt):
+    default_conf_usdt["dry_run"] = False
+    default_conf_usdt["trading_mode"] = "futures"
+    default_conf_usdt["margin_mode"] = "isolated"
+    default_conf_usdt["exchange"]["name"] = "bingx"
+    api_mock = MagicMock()
+    api_mock.set_leverage = MagicMock(return_value={"ok": True})
+    api_mock.fetch_position_mode = MagicMock(return_value={"hedged": True})
+    type(api_mock).has = PropertyMock(
+        return_value={"setLeverage": True, "fetchPositionMode": True}
+    )
+    ex = get_patched_exchange(mocker, default_conf_usdt, api_mock, exchange="bingx")
+    ex._set_leverage(7, "DOGE/USDT:USDT", accept_fail=False)
+    assert api_mock.set_leverage.call_count == 2
+    api_mock.set_leverage.assert_any_call(7, "DOGE/USDT:USDT", {"side": "LONG"})
+    api_mock.set_leverage.assert_any_call(7, "DOGE/USDT:USDT", {"side": "SHORT"})
