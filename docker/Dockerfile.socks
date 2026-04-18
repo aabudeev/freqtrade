@@ -1,19 +1,20 @@
-# Официальный stable + SOCKS + код из этого репозитория (форк).
-#
-# Раньше был только FROM stable + PySocks — в контейнере всегда чистый апстрим,
-# без bingx futures и прочих правок из локального дерева → ошибка вида
-# «does not support 'isolated' 'futures' on BingX».
-#
-# Сборка: из каталога freqtrade/ → docker compose build (context: . в compose).
-# user_data/ в .dockerignore — в образ не копируется; монтируется volume-ом.
+FROM freqtradeorg/freqtrade:stable AS upstream
+
 FROM freqtradeorg/freqtrade:stable
 
 USER root
+COPY --from=upstream /freqtrade/freqtrade/rpc/api_server/ui /tmp/frequi-ui
+RUN chown -R ftuser:ftuser /tmp/frequi-ui
+
 COPY --chown=ftuser:ftuser . /freqtrade/fork
 
 USER ftuser
 WORKDIR /freqtrade/fork
-RUN pip install --user --no-cache-dir --upgrade .
+RUN pip install --user --no-cache-dir --upgrade . \
+  && SITE_UI=$(python -c 'import os, site; print(os.path.join(site.getusersitepackages(), "freqtrade", "rpc", "api_server", "ui"))') \
+  && rm -rf "$SITE_UI" \
+  && mkdir -p "$SITE_UI" \
+  && cp -a /tmp/frequi-ui/. "$SITE_UI/"
 
 WORKDIR /freqtrade
 RUN pip install --user --no-cache-dir socksio "PySocks>=1.7.1"
