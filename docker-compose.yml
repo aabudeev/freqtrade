@@ -1,0 +1,46 @@
+---
+services:
+  freqtrade:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.socks
+    image: freqtrade-local:stable-socks
+    # image: freqtradeorg/freqtrade:stable
+    # image: freqtradeorg/freqtrade:develop
+    # Use plotting image
+    # image: freqtradeorg/freqtrade:develop_plot
+    # # Enable GPU Image and GPU Resources (only relevant for freqAI)
+    # # Make sure to uncomment the whole deploy section
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # Доп. пакеты без сборки: см. docker/Dockerfile.custom
+    restart: unless-stopped
+    container_name: freqtrade
+    environment:
+      - HTTP_PROXY=${TG_PROXY:-}
+      - HTTPS_PROXY=${TG_PROXY:-}
+      - FREQTRADE__TELEGRAM__TOKEN=${TELEGRAM_TOKEN}
+      - FREQTRADE__TELEGRAM__CHAT_ID=${TELEGRAM_CHAT_ID}
+      - FREQTRADE__EXCHANGE__KEY=${EXCHANGE_KEY}
+      - FREQTRADE__EXCHANGE__SECRET=${EXCHANGE_SECRET}
+    volumes:
+      - "./user_data:/freqtrade/user_data"
+    ports:
+      - "8080:8080"
+    # Default command used when running `docker compose up`
+    command: >
+      trade
+      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+      --config /freqtrade/user_data/config.json
+      --strategy SignalOnlyStrategy
+    networks:
+      - shared_network
+
+networks:
+  shared_network:
+    external: true
