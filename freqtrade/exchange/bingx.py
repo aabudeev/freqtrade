@@ -5,9 +5,14 @@ from math import floor
 
 import ccxt
 
-from freqtrade.constants import BuySell
+from freqtrade.constants import BuySell, Config
 from freqtrade.enums import MarginMode, TradingMode
-from freqtrade.exceptions import DDosProtection, OperationalException, TemporaryError
+from freqtrade.exceptions import (
+    ConfigurationError,
+    DDosProtection,
+    OperationalException,
+    TemporaryError,
+)
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import retrier
 from freqtrade.exchange.exchange_types import CcxtOrder, FtHas, LeverageTier
@@ -49,6 +54,46 @@ class Bingx(Exchange):
         # Enable when cross-margin swap is verified end-to-end on BingX:
         # (TradingMode.FUTURES, MarginMode.CROSS),
     ]
+
+    def validate_config(self, config: Config) -> None:
+        super().validate_config(config)
+        self._validate_bingx_futures_pair_symbols(config)
+
+    def _validate_bingx_futures_pair_symbols(self, config: Config) -> None:
+        """USDT-M swap uses CCXT unified symbols ``BASE/QUOTE:QUOTE``; spot-style pairs fail at runtime."""
+        if self.trading_mode != TradingMode.FUTURES:
+            return
+        stake = (config.get("stake_currency") or "").strip()
+        exchange = config.get("exchange") or {}
+        for list_name in ("pair_whitelist", "pair_blacklist"):
+            for pair in exchange.get(list_name, []):
+                self._check_bingx_swap_pair_symbol(pair, stake, list_name)
+
+    def _check_bingx_swap_pair_symbol(self, pair: str, stake: str, list_name: str) -> None:
+        if ":" not in pair:
+            raise ConfigurationError(
+                f"BingX USDT-M swap requires futures pair format BASE/QUOTE:QUOTE "
+                f"(e.g. BTC/USDT:USDT), not spot-style symbols. "
+                f"Offending entry in exchange.{list_name}: {pair}"
+            )
+        try:
+            base_quote, settle = pair.rsplit(":", 1)
+            _base, quote = base_quote.split("/", 1)
+        except ValueError as e:
+            raise ConfigurationError(
+                f"Invalid pair symbol for BingX futures: {pair!r} "
+                f"(expected BASE/QUOTE:QUOTE). Found in exchange.{list_name}."
+            ) from e
+        if quote != settle:
+            raise ConfigurationError(
+                f"BingX linear swap expects quote and settle currency to match "
+                f"(e.g. ETH/USDT:USDT), got {pair!r} in exchange.{list_name}."
+            )
+        if stake and settle != stake:
+            raise ConfigurationError(
+                f"BingX futures pair {pair!r} settles in {settle}, but stake_currency is {stake}. "
+                f"Use pairs ending with :{stake} in exchange.{list_name}."
+            )
 
     def create_order(
         self,

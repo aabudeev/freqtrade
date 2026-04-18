@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 
 from freqtrade.enums import MarginMode, TradingMode
+from freqtrade.exceptions import ConfigurationError
 from freqtrade.exchange import bingx
 from tests.conftest import get_patched_exchange
 
@@ -78,11 +79,81 @@ def test_bingx_parse_leverage_tier_respects_explicit_max_leverage():
     assert parsed["maxLeverage"] == 20.0
 
 
+def _bingx_futures_stub():
+    ex = _bingx_stub()
+    ex.trading_mode = TradingMode.FUTURES
+    return ex
+
+
+def test_bingx_futures_pair_validation_rejects_spot_style_whitelist():
+    ex = _bingx_futures_stub()
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {"pair_whitelist": ["BTC/USDT"], "pair_blacklist": []},
+    }
+    with pytest.raises(ConfigurationError, match="BASE/QUOTE:QUOTE"):
+        ex._validate_bingx_futures_pair_symbols(cfg)
+
+
+def test_bingx_futures_pair_validation_rejects_mismatched_settle_and_stake():
+    ex = _bingx_futures_stub()
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {"pair_whitelist": ["ETH/USDC:USDC"], "pair_blacklist": []},
+    }
+    with pytest.raises(ConfigurationError, match="stake_currency"):
+        ex._validate_bingx_futures_pair_symbols(cfg)
+
+
+def test_bingx_futures_pair_validation_rejects_quote_ne_settle():
+    ex = _bingx_futures_stub()
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {"pair_whitelist": ["BTC/USD:USDT"], "pair_blacklist": []},
+    }
+    with pytest.raises(ConfigurationError, match="quote and settle"):
+        ex._validate_bingx_futures_pair_symbols(cfg)
+
+
+def test_bingx_futures_pair_validation_checks_blacklist():
+    ex = _bingx_futures_stub()
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {"pair_whitelist": ["DOGE/USDT:USDT"], "pair_blacklist": ["BAD/USDT"]},
+    }
+    with pytest.raises(ConfigurationError, match="BASE/QUOTE:QUOTE"):
+        ex._validate_bingx_futures_pair_symbols(cfg)
+
+
+def test_bingx_futures_pair_validation_accepts_swap_symbols():
+    ex = _bingx_futures_stub()
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {
+            "pair_whitelist": ["DOGE/USDT:USDT", "ETH/USDT:USDT"],
+            "pair_blacklist": ["SCAM/USDT:USDT"],
+        },
+    }
+    ex._validate_bingx_futures_pair_symbols(cfg)
+
+
+def test_bingx_spot_mode_skips_futures_pair_validation():
+    ex = _bingx_stub()
+    ex.trading_mode = TradingMode.SPOT
+    cfg = {
+        "stake_currency": "USDT",
+        "exchange": {"pair_whitelist": ["BTC/USDT"], "pair_blacklist": []},
+    }
+    ex._validate_bingx_futures_pair_symbols(cfg)
+
+
 @pytest.mark.usefixtures("init_persistence")
 def test_bingx_get_params_adds_hedged_when_hedge_mode(mocker, default_conf_usdt):
     default_conf_usdt["trading_mode"] = "futures"
     default_conf_usdt["margin_mode"] = "isolated"
     default_conf_usdt["exchange"]["name"] = "bingx"
+    default_conf_usdt["exchange"]["pair_whitelist"] = ["ETH/USDT:USDT"]
+    default_conf_usdt["exchange"]["pair_blacklist"] = ["DOGE/USDT:USDT"]
     api_mock = MagicMock()
     type(api_mock).has = PropertyMock(
         return_value={"setLeverage": True, "fetchPositionMode": True}
@@ -99,6 +170,8 @@ def test_bingx_set_leverage_one_way_uses_both(mocker, default_conf_usdt):
     default_conf_usdt["trading_mode"] = "futures"
     default_conf_usdt["margin_mode"] = "isolated"
     default_conf_usdt["exchange"]["name"] = "bingx"
+    default_conf_usdt["exchange"]["pair_whitelist"] = ["ETH/USDT:USDT"]
+    default_conf_usdt["exchange"]["pair_blacklist"] = ["DOGE/USDT:USDT"]
     api_mock = MagicMock()
     api_mock.set_leverage = MagicMock(return_value={"ok": True})
     api_mock.fetch_position_mode = MagicMock(return_value={"hedged": False})
@@ -116,6 +189,8 @@ def test_bingx_set_leverage_hedge_sets_long_and_short(mocker, default_conf_usdt)
     default_conf_usdt["trading_mode"] = "futures"
     default_conf_usdt["margin_mode"] = "isolated"
     default_conf_usdt["exchange"]["name"] = "bingx"
+    default_conf_usdt["exchange"]["pair_whitelist"] = ["ETH/USDT:USDT"]
+    default_conf_usdt["exchange"]["pair_blacklist"] = ["DOGE/USDT:USDT"]
     api_mock = MagicMock()
     api_mock.set_leverage = MagicMock(return_value={"ok": True})
     api_mock.fetch_position_mode = MagicMock(return_value={"hedged": True})
