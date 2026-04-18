@@ -1,9 +1,12 @@
 """Bingx exchange subclass"""
 
+import asyncio
 import logging
 from math import floor
 
 import ccxt
+
+from freqtrade.misc import chunks
 
 from freqtrade.constants import BuySell, Config
 from freqtrade.enums import MarginMode, TradingMode
@@ -22,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 # CCXT BingX leaves ``maxLeverage`` empty in leverage tiers; cap avoids absurd 1/mmr values.
 _BINGX_MAX_LEV_APPROX_CAP = 150.0
+# BingX rate-limits per-market leverage tier requests (~30 / 120s). Default Exchange uses chunks of 100.
+_BINGX_LEVERAGE_TIERS_CHUNK = 8
+_BINGX_LEVERAGE_TIERS_SLEEP_S = 4.0
 
 
 class Bingx(Exchange):
@@ -210,6 +216,92 @@ class Bingx(Exchange):
             ) from e
         except ccxt.BaseError as e:
             raise OperationalException(e) from e
+
+    def load_leverage_tiers(self) -> dict[str, list[dict]]:
+        """
+        BingX only supports ``fetchMarketLeverageTiers`` (one call per symbol). The default
+        implementation fans out to every swap and runs ~100 requests in parallel, which trips
+        BingX error 109429 (``over 30 ... requests within 120000 ms``).
+
+        Mitigation: if ``exchange.pair_whitelist`` is set, load tiers **only** for those symbols;
+        otherwise throttle chunk size and sleep between chunks. Prefer a non-empty static whitelist.
+        """
+        if self.trading_mode != TradingMode.FUTURES:
+            return {}
+        if self.exchange_has("fetchLeverageTiers"):
+            return super().load_leverage_tiers()
+        if not self.exchange_has("fetchMarketLeverageTiers"):
+            return {}
+
+        markets = self.markets
+        symbols = sorted(
+            symbol
+            for symbol, market in markets.items()
+            if (
+                self.market_is_future(market)
+                and market["quote"] == self._config["stake_currency"]
+            )
+        )
+        pair_whitelist = self._config.get("exchange", {}).get("pair_whitelist") or []
+        wl_set = set(pair_whitelist)
+        if wl_set:
+            symbols = [s for s in symbols if s in wl_set]
+            if not symbols:
+                logger.warning(
+                    "BingX: pair_whitelist matches no USDT-M swap markets for leverage tiers. "
+                    "Use symbols like BASE/USDT:USDT."
+                )
+                return {}
+        else:
+            logger.info(
+                "BingX: empty pair_whitelist — loading leverage tiers for all swap markets "
+                "(slow; set a static whitelist to reduce API load)."
+            )
+
+        tiers: dict[str, list[dict]] = {}
+        tiers_cached = self.load_cached_leverage_tiers(self._config["stake_currency"])
+        if tiers_cached:
+            tiers = {k: v for k, v in tiers_cached.items() if k in symbols} if wl_set else dict(tiers_cached)
+
+        coros = [self.get_market_leverage_tiers(symbol) for symbol in symbols if symbol not in tiers]
+
+        if coros:
+            logger.info(
+                "BingX: fetching leverage tiers for %s symbol(s) (chunk=%s, inter-chunk sleep=%ss).",
+                len(coros),
+                _BINGX_LEVERAGE_TIERS_CHUNK,
+                _BINGX_LEVERAGE_TIERS_SLEEP_S,
+            )
+        else:
+            logger.info("Using cached leverage_tiers.")
+
+        async def gather_results(input_coro):
+            return await asyncio.gather(*input_coro, return_exceptions=True)
+
+        async def chunk_sleep():
+            await asyncio.sleep(_BINGX_LEVERAGE_TIERS_SLEEP_S)
+
+        chunk_list = list(chunks(coros, _BINGX_LEVERAGE_TIERS_CHUNK))
+        for i, input_coro in enumerate(chunk_list):
+            with self._loop_lock:
+                results = self.loop.run_until_complete(gather_results(input_coro))
+
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.warning("Leverage tier exception: %s", repr(res))
+                    continue
+                symbol, tier = res
+                tiers[symbol] = tier
+
+            if i < len(chunk_list) - 1:
+                with self._loop_lock:
+                    self.loop.run_until_complete(chunk_sleep())
+
+        if coros:
+            self.cache_leverage_tiers(tiers, self._config["stake_currency"])
+        logger.info("BingX: leverage tiers ready for %s market(s).", len(symbols))
+
+        return tiers
 
     def parse_leverage_tier(self, tier: dict) -> LeverageTier:
         """
