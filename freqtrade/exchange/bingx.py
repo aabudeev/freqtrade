@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 # CCXT BingX leaves ``maxLeverage`` empty in leverage tiers; cap avoids absurd 1/mmr values.
 _BINGX_MAX_LEV_APPROX_CAP = 150.0
-# BingX rate-limits per-market leverage tier requests (~30 / 120s). Default Exchange uses chunks of 100.
-_BINGX_LEVERAGE_TIERS_CHUNK = 8
-_BINGX_LEVERAGE_TIERS_SLEEP_S = 4.0
+# BingX: ~30 tier API calls / 120s. Use sequential fetches + pause (parallel bursts still burn the quota).
+_BINGX_LEVERAGE_TIERS_CHUNK = 1
+_BINGX_LEVERAGE_TIERS_SLEEP_S = 4.5
 
 
 class Bingx(Exchange):
@@ -228,10 +228,10 @@ class Bingx(Exchange):
         """
         if self.trading_mode != TradingMode.FUTURES:
             return {}
-        if self.exchange_has("fetchLeverageTiers"):
-            return super().load_leverage_tiers()
         if not self.exchange_has("fetchMarketLeverageTiers"):
             return {}
+        # Do not call super().load_leverage_tiers(): base implementation fans out to every swap
+        # (100 parallel) and logs "Done initializing N markets" — unusable on BingX (109429).
 
         markets = self.markets
         symbols = sorted(
@@ -242,10 +242,18 @@ class Bingx(Exchange):
                 and market["quote"] == self._config["stake_currency"]
             )
         )
+        total_swaps = len(symbols)
         pair_whitelist = self._config.get("exchange", {}).get("pair_whitelist") or []
         wl_set = set(pair_whitelist)
         if wl_set:
             symbols = [s for s in symbols if s in wl_set]
+            logger.info(
+                "BingX: load_leverage_tiers (fork): %s whitelist pair(s) for tiers "
+                "(%s config entries, %s USDT swaps total on exchange).",
+                len(symbols),
+                len(pair_whitelist),
+                total_swaps,
+            )
             if not symbols:
                 logger.warning(
                     "BingX: pair_whitelist matches no USDT-M swap markets for leverage tiers. "
@@ -253,15 +261,17 @@ class Bingx(Exchange):
                 )
                 return {}
         else:
-            logger.info(
-                "BingX: empty pair_whitelist — loading leverage tiers for all swap markets "
-                "(slow; set a static whitelist to reduce API load)."
+            logger.warning(
+                "BingX: load_leverage_tiers (fork): pair_whitelist empty — fetching tiers for "
+                "all %s swaps (very slow, 109429 risk). Set exchange.pair_whitelist.",
+                total_swaps,
             )
 
         tiers: dict[str, list[dict]] = {}
         tiers_cached = self.load_cached_leverage_tiers(self._config["stake_currency"])
         if tiers_cached:
-            tiers = {k: v for k, v in tiers_cached.items() if k in symbols} if wl_set else dict(tiers_cached)
+            symset = set(symbols)
+            tiers = {k: v for k, v in tiers_cached.items() if k in symset}
 
         coros = [self.get_market_leverage_tiers(symbol) for symbol in symbols if symbol not in tiers]
 
