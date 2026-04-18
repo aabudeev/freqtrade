@@ -216,7 +216,9 @@ class FreqtradeBot(LoggingMixin):
             logger.warning(f"Exception during cleanup: {e.__class__.__name__} {e}")
 
         finally:
-            self.strategy.ft_bot_cleanup()
+            strategy = getattr(self, "strategy", None)
+            if strategy is not None:
+                strategy.ft_bot_cleanup()
 
         if getattr(self, "rpc", None):
             self.rpc.cleanup()

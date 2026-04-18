@@ -115,14 +115,17 @@ def test_bingx_futures_pair_validation_rejects_quote_ne_settle():
         ex._validate_bingx_futures_pair_symbols(cfg)
 
 
-def test_bingx_futures_pair_validation_checks_blacklist():
+def test_bingx_futures_pair_validation_allows_blacklist_regex():
+    """Blacklist may use regex (e.g. BNB/.*); do not require swap literal format there."""
     ex = _bingx_futures_stub()
     cfg = {
         "stake_currency": "USDT",
-        "exchange": {"pair_whitelist": ["DOGE/USDT:USDT"], "pair_blacklist": ["BAD/USDT"]},
+        "exchange": {
+            "pair_whitelist": ["DOGE/USDT:USDT"],
+            "pair_blacklist": ["BNB/.*", "BAD/USDT"],
+        },
     }
-    with pytest.raises(ConfigurationError, match="BASE/QUOTE:QUOTE"):
-        ex._validate_bingx_futures_pair_symbols(cfg)
+    ex._validate_bingx_futures_pair_symbols(cfg)
 
 
 def test_bingx_futures_pair_validation_accepts_swap_symbols():

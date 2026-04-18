@@ -60,14 +60,18 @@ class Bingx(Exchange):
         self._validate_bingx_futures_pair_symbols(config)
 
     def _validate_bingx_futures_pair_symbols(self, config: Config) -> None:
-        """USDT-M swap uses CCXT unified symbols ``BASE/QUOTE:QUOTE``; spot-style pairs fail at runtime."""
+        """
+        USDT-M swap uses CCXT unified symbols ``BASE/QUOTE:QUOTE``; spot-style pairs fail at runtime.
+
+        Only ``pair_whitelist`` is checked: ``pair_blacklist`` entries are often regex/wildcards
+        (e.g. ``BNB/.*``) and are expanded against markets later, not validated as literal symbols.
+        """
         if self.trading_mode != TradingMode.FUTURES:
             return
         stake = (config.get("stake_currency") or "").strip()
         exchange = config.get("exchange") or {}
-        for list_name in ("pair_whitelist", "pair_blacklist"):
-            for pair in exchange.get(list_name, []):
-                self._check_bingx_swap_pair_symbol(pair, stake, list_name)
+        for pair in exchange.get("pair_whitelist", []):
+            self._check_bingx_swap_pair_symbol(pair, stake, "pair_whitelist")
 
     def _check_bingx_swap_pair_symbol(self, pair: str, stake: str, list_name: str) -> None:
         if ":" not in pair:
