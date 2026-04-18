@@ -1,0 +1,5 @@
+# Официальный stable + SOCKS: без этого httpx/requests падают при TG_PROXY=socks5://...
+# Сборка идёт без прокси из .env — pip тянет пакеты напрямую.
+FROM freqtradeorg/freqtrade:stable
+USER ftuser
+RUN pip install --user --no-cache-dir socksio "PySocks>=1.7.1"
