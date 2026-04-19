@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Debug: print parsed ingest events from a history export file."""
+"""Debug: print parsed ingest events from a **legacy** newline export (history_*.txt).
+
+Prefer Telethon JSON: ``dump_channel_messages_json.py`` + ``replay_telegram_json_dump.py``.
+"""
 from __future__ import annotations
 
 import argparse

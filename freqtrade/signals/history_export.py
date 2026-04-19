@@ -1,5 +1,7 @@
 """
-Parse local channel history dumps (Phase C.replay.1).
+Legacy: parse **post-line** channel exports (сторонний экспортёр, не MTProto).
+
+Основной путь для форка — :mod:`freqtrade.signals.telethon_message` (JSON ``Message.to_dict()``).
 
 Export format (one message per line)::
     DD-MM-YYYY HH:MM:SS | <meta> | <meta> | <message text>
