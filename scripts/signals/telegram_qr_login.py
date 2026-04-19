@@ -89,7 +89,10 @@ async def main() -> int:
 
     from telethon import TelegramClient
 
-    client = TelegramClient(session_path, api_id, api_hash)
+    from telethon_proxy import telethon_proxy_from_env
+
+    proxy = telethon_proxy_from_env()
+    client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)
     await client.connect()
     if await client.is_user_authorized():
         me = await client.get_me()

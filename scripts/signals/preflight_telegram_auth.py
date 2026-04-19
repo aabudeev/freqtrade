@@ -109,8 +109,39 @@ async def _run() -> int:
     from telethon import TelegramClient
     from telethon import errors
 
-    client = TelegramClient(session_path, api_id, api_hash)
-    await client.connect()
+    from telethon_proxy import telethon_proxy_from_env
+
+    proxy = telethon_proxy_from_env()
+    if proxy:
+        log.info("Telethon MTProto через прокси (из TELEGRAM_MTPROXY / TG_PROXY / HTTP_PROXY)")
+    else:
+        log.warning(
+            "Telethon MTProto без прокси: прямое подключение к dc.telegram.org. "
+            "При блокировке/таймаутах задайте TG_PROXY или TELEGRAM_MTPROXY (тот же URL, что для бота)."
+        )
+
+    client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)
+    try:
+        await client.connect()
+    except (ConnectionError, OSError, TimeoutError, asyncio.TimeoutError) as e:
+        log.exception("Telethon connect failed")
+        try:
+            await _bot_send_message(
+                token,
+                chat_id,
+                "Telethon: нет связи с серверами Telegram (MTProto, таймаут). "
+                "Задайте в .env прокси для MTProto — обычно тот же, что TG_PROXY "
+                "(socks5://…), пересоберите/перезапустите контейнер. "
+                f"Подробности: {e!s}",
+            )
+        except Exception:
+            pass
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        return 1
+
     try:
         if await client.is_user_authorized():
             me = await client.get_me()

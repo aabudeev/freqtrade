@@ -2,3 +2,4 @@
 # Install: pip install -r requirements-signals.txt
 telethon>=1.34.0,<2
 qrcode>=7.4.2
+Pillow>=10.0.0
