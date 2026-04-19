@@ -101,7 +101,11 @@ target/
 .python-version
 
 .env
-.venv
+# Python virtualenvs: .venv, .venv-bingx-test3, … (keep Git UI clean)
+.venv*
+venv/
+env/
+ENV/
 
 # Phase C: Telegram MTProto session files (never commit)
 *.session
@@ -127,4 +131,3 @@ PROJECT_CONTEXT.md
 PROJECT_SESSION_AND_ROADMAP.md
 CONTRIBUTING.md
 README.md
-.venv-ci/
