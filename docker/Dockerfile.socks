@@ -11,6 +11,7 @@ COPY --chown=ftuser:ftuser . /freqtrade/fork
 USER ftuser
 WORKDIR /freqtrade/fork
 RUN pip install --user --no-cache-dir --upgrade . \
+  && pip install --user --no-cache-dir -r requirements-signals.txt \
   && SITE_UI=$(python -c 'import os, site; print(os.path.join(site.getusersitepackages(), "freqtrade", "rpc", "api_server", "ui"))') \
   && rm -rf "$SITE_UI" \
   && mkdir -p "$SITE_UI" \
