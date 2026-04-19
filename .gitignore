@@ -102,6 +102,10 @@ target/
 
 .env
 .venv
+
+# Phase C: Telegram MTProto session files (never commit)
+*.session
+*.session-journal
 .idea
 .vscode
 

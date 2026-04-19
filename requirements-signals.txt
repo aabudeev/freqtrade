@@ -1,0 +1,4 @@
+# Phase C: Telegram user client (MTProto) for signal channel ingest.
+# Install: pip install -r requirements-signals.txt
+telethon>=1.34.0,<2
+qrcode>=7.4.2
