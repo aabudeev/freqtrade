@@ -5,23 +5,9 @@ services:
       context: .
       dockerfile: docker/Dockerfile.socks
     image: freqtrade-local:stable-socks
-    # image: freqtradeorg/freqtrade:stable
-    # image: freqtradeorg/freqtrade:develop
-    # Use plotting image
-    # image: freqtradeorg/freqtrade:develop_plot
-    # # Enable GPU Image and GPU Resources (only relevant for freqAI)
-    # # Make sure to uncomment the whole deploy section
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-    # Доп. пакеты без сборки: см. docker/Dockerfile.custom
     restart: unless-stopped
     container_name: freqtrade
-    # Значения берутся из .env в каталоге compose (подстановка ${...} на хосте) — и для `up`, и для `run`.
+    entrypoint: ["/bin/bash", "/freqtrade/fork/scripts/signals/run_freqtrade_with_auth.sh"]
     environment:
       - HTTP_PROXY=${TG_PROXY:-}
       - HTTPS_PROXY=${TG_PROXY:-}
@@ -29,21 +15,23 @@ services:
       - FREQTRADE__TELEGRAM__CHAT_ID=${TELEGRAM_CHAT_ID}
       - FREQTRADE__EXCHANGE__KEY=${EXCHANGE_KEY}
       - FREQTRADE__EXCHANGE__SECRET=${EXCHANGE_SECRET}
-      # Phase C: Telethon (QR / listener), не путать с FREQTRADE__TELEGRAM__* (Bot API)
       - TELEGRAM_API_ID=${TELEGRAM_API_ID:-}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
       - TELEGRAM_SESSION_PATH=${TELEGRAM_SESSION_PATH:-user_data/.secrets/telegram_signals.session}
       - TELEGRAM_2FA_PASSWORD=${TELEGRAM_2FA_PASSWORD:-}
+      - ENABLE_TELEGRAM_SIGNAL_AUTH=${ENABLE_TELEGRAM_SIGNAL_AUTH:-0}
     volumes:
       - "./user_data:/freqtrade/user_data"
     ports:
       - "8080:8080"
-    # Default command used when running `docker compose up`
-    command: >
-      trade
-      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
-      --config /freqtrade/user_data/config.json
-      --strategy SignalOnlyStrategy
+    command:
+      - trade
+      - --db-url
+      - sqlite:////freqtrade/user_data/tradesv3.sqlite
+      - --config
+      - /freqtrade/user_data/config.json
+      - --strategy
+      - SignalOnlyStrategy
     networks:
       - shared_network
 

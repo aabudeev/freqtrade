@@ -8,6 +8,9 @@ RUN chown -R ftuser:ftuser /tmp/frequi-ui
 
 COPY --chown=ftuser:ftuser . /freqtrade/fork
 
+USER root
+RUN chmod +x /freqtrade/fork/scripts/signals/run_freqtrade_with_auth.sh
+
 USER ftuser
 WORKDIR /freqtrade/fork
 RUN pip install --user --no-cache-dir --upgrade . \
