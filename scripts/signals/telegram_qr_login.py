@@ -2,11 +2,16 @@
 """
 Create or refresh a Telethon session using QR login (scan with Telegram app).
 
-Environment:
+Environment (often from server .env — not committed):
   TELEGRAM_API_ID     — int, from https://my.telegram.org
   TELEGRAM_API_HASH   — string
   TELEGRAM_SESSION_PATH — optional, default user_data/.secrets/telegram_signals.session
   TELEGRAM_2FA_PASSWORD — optional; else prompted if account has 2FA
+
+Where to run:
+  Any machine once: laptop, CI runner, or server over ssh -t. The output is a *.session
+  file — copy it to the host path mounted as user_data/.secrets/ if QR was not run on
+  the same host as Docker. See docs/private/phase-c-signals-architecture.md (QR / Git).
 
 Usage:
   pip install -r requirements-signals.txt
