@@ -21,6 +21,7 @@ services:
     # Доп. пакеты без сборки: см. docker/Dockerfile.custom
     restart: unless-stopped
     container_name: freqtrade
+    # Значения берутся из .env в каталоге compose (подстановка ${...} на хосте) — и для `up`, и для `run`.
     environment:
       - HTTP_PROXY=${TG_PROXY:-}
       - HTTPS_PROXY=${TG_PROXY:-}
@@ -28,6 +29,11 @@ services:
       - FREQTRADE__TELEGRAM__CHAT_ID=${TELEGRAM_CHAT_ID}
       - FREQTRADE__EXCHANGE__KEY=${EXCHANGE_KEY}
       - FREQTRADE__EXCHANGE__SECRET=${EXCHANGE_SECRET}
+      # Phase C: Telethon (QR / listener), не путать с FREQTRADE__TELEGRAM__* (Bot API)
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID:-}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
+      - TELEGRAM_SESSION_PATH=${TELEGRAM_SESSION_PATH:-user_data/.secrets/telegram_signals.session}
+      - TELEGRAM_2FA_PASSWORD=${TELEGRAM_2FA_PASSWORD:-}
     volumes:
       - "./user_data:/freqtrade/user_data"
     ports:
