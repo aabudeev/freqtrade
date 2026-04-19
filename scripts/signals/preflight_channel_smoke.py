@@ -23,10 +23,6 @@ import logging
 import os
 import sys
 
-_SIGNALS_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SIGNALS_DIR not in sys.path:
-    sys.path.insert(0, _SIGNALS_DIR)
-
 log = logging.getLogger("preflight_channel_smoke")
 
 
@@ -67,9 +63,9 @@ async def _run() -> int:
         return 1
 
     from telethon import TelegramClient
-    from telethon_proxy import telethon_proxy_from_env
 
     from freqtrade.signals.channel_smoke import count_channel_smoke
+    from freqtrade.signals.telethon_proxy import telethon_proxy_from_env
 
     proxy = telethon_proxy_from_env()
     client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)

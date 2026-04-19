@@ -138,6 +138,20 @@ class FreqtradeBot(LoggingMixin):
                 else None
             )
 
+            # Telethon listener → SQLite ingest queue (same path as replay JSON)
+            self.telegram_signals_listener = None
+            try:
+                from freqtrade.signals.telegram_listener import (
+                    TelegramSignalsListener,
+                    telegram_signals_listener_enabled,
+                )
+
+                if telegram_signals_listener_enabled():
+                    self.telegram_signals_listener = TelegramSignalsListener(self.config)
+                    self.telegram_signals_listener.start()
+            except Exception:
+                logger.exception("Failed to start Telegram signals listener")
+
             logger.info("Starting initial pairlist refresh")
             with MeasureTime(
                 lambda duration, _: logger.info(f"Initial Pairlist refresh took {duration:.2f}s"), 0
@@ -219,6 +233,9 @@ class FreqtradeBot(LoggingMixin):
             strategy = getattr(self, "strategy", None)
             if strategy is not None:
                 strategy.ft_bot_cleanup()
+
+        if getattr(self, "telegram_signals_listener", None):
+            self.telegram_signals_listener.shutdown()
 
         if getattr(self, "rpc", None):
             self.rpc.cleanup()

@@ -89,7 +89,7 @@ async def main() -> int:
 
     from telethon import TelegramClient
 
-    from telethon_proxy import telethon_proxy_from_env
+    from freqtrade.signals.telethon_proxy import telethon_proxy_from_env
 
     proxy = telethon_proxy_from_env()
     client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)

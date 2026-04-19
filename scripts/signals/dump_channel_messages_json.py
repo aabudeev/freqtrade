@@ -6,7 +6,7 @@ Environment:
   TELEGRAM_API_ID, TELEGRAM_API_HASH — https://my.telegram.org
   TELEGRAM_SIGNALS_CHANNEL_ID — numeric channel id (e.g. 1566432615; peer is -100<id>)
   TELEGRAM_SESSION_PATH — optional, default user_data/.secrets/telegram_signals.session
-  TG_PROXY / HTTP_PROXY / … — see telethon_proxy.py
+  TG_PROXY / HTTP_PROXY / … — ``freqtrade.signals.telethon_proxy``
 
 Usage:
   cd <repo> && export TELEGRAM_API_ID=... TELEGRAM_API_HASH=... TELEGRAM_SIGNALS_CHANNEL_ID=...
@@ -25,10 +25,8 @@ from datetime import date, datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SIGNALS_DIR = Path(__file__).resolve().parent
-for _p in (_REPO_ROOT, _SIGNALS_DIR):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _session_path() -> str:
@@ -59,7 +57,8 @@ async def _run() -> int:
     peer_id = ch_id if str(ch_raw).startswith("-") else int(f"-100{ch_id}")
 
     from telethon import TelegramClient
-    from telethon_proxy import telethon_proxy_from_env
+
+    from freqtrade.signals.telethon_proxy import telethon_proxy_from_env
 
     proxy = telethon_proxy_from_env()
     client = TelegramClient(_session_path(), api_id, api_hash, proxy=proxy)

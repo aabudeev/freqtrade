@@ -109,7 +109,7 @@ async def _run() -> int:
     from telethon import TelegramClient
     from telethon import errors
 
-    from telethon_proxy import telethon_proxy_from_env
+    from freqtrade.signals.telethon_proxy import telethon_proxy_from_env
 
     proxy = telethon_proxy_from_env()
     if proxy:
