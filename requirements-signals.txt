@@ -1,5 +1,7 @@
 # Phase C: Telegram user client (MTProto) for signal channel ingest.
 # Install: pip install -r requirements-signals.txt
 telethon>=1.34.0,<2
+# Telethon применяет proxy= только с этим пакетом (не путать с PySocks из Dockerfile)
+python-socks[asyncio]>=2.4.0,<3
 qrcode>=7.4.2
 Pillow>=10.0.0
