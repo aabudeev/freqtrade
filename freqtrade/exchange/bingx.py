@@ -18,7 +18,7 @@ from freqtrade.exceptions import (
 )
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import retrier
-from freqtrade.exchange.exchange_types import CcxtOrder, FtHas, LeverageTier
+from freqtrade.exchange.exchange_types import CcxtOrder, FtHas, LeverageTier, CcxtBalances
 
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,24 @@ class Bingx(Exchange):
             reduceOnly=reduceOnly,
             initial_order=initial_order,
         )
+
+    def additional_exchange_init(self) -> None:
+        super().additional_exchange_init()
+        # На BingX включаем песочницу напрямую через метод CCXT, так как Freqtrade сам это не делает
+        if self._config.get("exchange", {}).get("sandbox"):
+            self._api.set_sandbox_mode(True)
+            self._api_async.set_sandbox_mode(True)
+            if self._ws_async:
+                self._ws_async.set_sandbox_mode(True)
+            logger.info("BingX Sandbox mode enabled for VST trading")
+
+    def get_balances(self, params: dict | None = None) -> CcxtBalances:
+        balances = super().get_balances(params)
+        # В режиме песочницы BingX возвращает баланс в токене VST
+        # Freqtrade ожидает USDT. Алиасим VST в USDT.
+        if self._config.get("exchange", {}).get("sandbox") and "VST" in balances:
+            balances["USDT"] = balances.pop("VST")
+        return balances
 
     def _bingx_refresh_hedge_flag(self, pair: str) -> None:
         """Cache ``fetch_position_mode`` per pair (BingX swap API is mode-wide; avoid extra calls)."""
