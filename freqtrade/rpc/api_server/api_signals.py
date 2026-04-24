@@ -89,13 +89,29 @@ def get_klines(symbol: str = "BTC/USDT:USDT", timeframe: str = "15m", limit: int
     if rpc is None:
         return {"code": -1, "msg": "RPC not available", "data": []}
     try:
-        exchange = rpc._freqtrade.exchange
+        from datetime import datetime, UTC, timedelta
         from freqtrade.enums import CandleType
-        # fetch_ohlcv returns [[ts_ms, o, h, l, c, v], ...]
-        raw = exchange._api.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        
+        exchange = rpc._freqtrade.exchange
+        # Using 2 days of history to be sure we have enough for the limit
+        since_ms = int((datetime.now(UTC) - timedelta(days=2)).timestamp() * 1000)
+        
+        df = exchange.get_historic_ohlcv(
+            pair=symbol,
+            timeframe=timeframe,
+            since_ms=since_ms,
+            candle_type=CandleType.FUTURES
+        )
+        
         data = [
-            {"time": int(c[0]) // 1000, "open": c[1], "high": c[2], "low": c[3], "close": c[4]}
-            for c in raw
+            {
+                "time": int(row.date.timestamp()),
+                "open": row.open,
+                "high": row.high,
+                "low": row.low,
+                "close": row.close
+            }
+            for row in df.tail(limit).itertuples()
         ]
         return {"code": 0, "data": data}
     except Exception as e:

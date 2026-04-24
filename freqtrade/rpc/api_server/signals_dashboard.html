@@ -317,7 +317,9 @@
                     try {
                         const vuex = JSON.parse(localStorage.getItem('vuex') || '{}');
                         if (vuex.auth) { 
+                            // Update both possible keys FreqUI might use
                             vuex.auth.token = ftToken; 
+                            vuex.auth.access_token = ftToken;
                             localStorage.setItem('vuex', JSON.stringify(vuex)); 
                         }
                     } catch (e) {}
@@ -349,8 +351,8 @@
                     if (vuexStr) {
                         const vuex = JSON.parse(vuexStr);
                         if (vuex && vuex.auth) {
-                            if (vuex.auth.token) ftToken = vuex.auth.token;
-                            if (vuex.auth.refresh_token) ftRefreshToken = vuex.auth.refresh_token;
+                            ftToken = vuex.auth.token || vuex.auth.access_token || '';
+                            ftRefreshToken = vuex.auth.refresh_token || '';
                         }
                     }
                 } catch (e) {}
