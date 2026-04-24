@@ -417,7 +417,7 @@
 
             if (text.includes('SHORT')) type = "SHORT";
 
-            const lines = text.split('\\n');
+            const lines = text.split(/\\n|\n/);
             for (const line of lines) {
                 if (line.includes('Монета:')) coin = line.split('Монета:')[1].trim();
                 if (line.includes('Плечо:')) lev = line.split('Плечо:')[1].trim();
@@ -425,6 +425,15 @@
                 if (line.includes('Цель:')) tp = line.split('Цель:')[1].trim();
                 if (line.includes('Стоп:')) sl = line.split('Стоп:')[1].trim();
             }
+            
+            // Clean up to prevent SyntaxError in inline onclick handlers
+            coin = coin.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+            type = type.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+            lev = lev.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+            entry = entry.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+            tp = tp.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+            sl = sl.replace(/[\r\n]+/g, '').replace(/['"]/g, '');
+
             return { coin, type, lev, entry, tp, sl };
         }
 
@@ -508,16 +517,21 @@
             });
 
             try {
-                const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${coin}USDT&interval=15m&limit=100`);
-                const data = await res.json();
-                const chartData = data.map(d => ({
-                    time: d[0] / 1000,
-                    open: parseFloat(d[1]),
-                    high: parseFloat(d[2]),
-                    low: parseFloat(d[3]),
-                    close: parseFloat(d[4])
-                }));
-                lineSeries.setData(chartData);
+                const res = await fetch(`https://open-api.bingx.com/openApi/swap/v2/quote/klines?symbol=${coin}-USDT&interval=15m&limit=100`);
+                const resJson = await res.json();
+                
+                if (resJson.code === 0 && resJson.data) {
+                    const chartData = resJson.data.map(d => ({
+                        time: d.time / 1000,
+                        open: parseFloat(d.open),
+                        high: parseFloat(d.high),
+                        low: parseFloat(d.low),
+                        close: parseFloat(d.close)
+                    }));
+                    lineSeries.setData(chartData);
+                } else {
+                    console.error('BingX API failed or returned empty data', resJson);
+                }
                 
                 // Add price lines
                 if (tp && tp !== '--') {
