@@ -79,18 +79,3 @@ async def update_signals_settings(request: dict, config: dict = Depends(get_conf
         logger.exception("Error updating settings")
         return {"error": str(e)}
 
-
-@router.get("/klines", tags=["Signals"])
-def get_klines(symbol: str = "BTC-USDT", interval: str = "15m", limit: int = 100) -> Dict[str, Any]:
-    """
-    Server-side proxy for BingX klines to avoid CORS.
-    """
-    try:
-        url = f"https://open-api.bingx.com/openApi/swap/v2/quote/klines?symbol={symbol}&interval={interval}&limit={limit}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = _json.loads(resp.read().decode())
-        return data
-    except Exception as e:
-        logger.exception("Error fetching klines from BingX")
-        return {"code": -1, "msg": str(e), "data": []}

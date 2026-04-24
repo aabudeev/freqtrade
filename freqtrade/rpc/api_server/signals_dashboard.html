@@ -481,7 +481,7 @@
                     <td style="color: #f6465d;">${p.sl}</td>
                     <td class="val-muted">${dateStr}</td>
                     <td>${getStatusHtml(sig.status)}</td>
-                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">[открыть]</button></td>
+                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">открыть</button></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -525,22 +525,24 @@
             });
 
             try {
-                const res = await fetch(`/api/v1/klines?symbol=${coin}-USDT&interval=15m&limit=150`, {
+                // Use Freqtrade's built-in CCXT pair_candles endpoint (no CORS issues)
+                const res = await fetch(`/api/v1/pair_candles?pair=${coin}/USDT:USDT&timeframe=15m&limit=150`, {
                     headers: { 'Authorization': `Bearer ${ftToken}` }
                 });
                 const resJson = await res.json();
                 
-                if (resJson.code === 0 && resJson.data) {
+                // pair_candles returns {pair, timeframe, data: [[ts, o, h, l, c, v], ...]}
+                if (resJson && resJson.data && resJson.data.length > 0) {
                     const chartData = resJson.data.map(d => ({
-                        time: d.time / 1000,
-                        open: parseFloat(d.open),
-                        high: parseFloat(d.high),
-                        low: parseFloat(d.low),
-                        close: parseFloat(d.close)
+                        time: d[0],   // already in seconds
+                        open: d[1],
+                        high: d[2],
+                        low: d[3],
+                        close: d[4]
                     }));
                     lineSeries.setData(chartData);
                 } else {
-                    console.error('BingX API failed or returned empty data', resJson);
+                    console.error('pair_candles returned no data', resJson);
                 }
                 
                 // Add price lines
