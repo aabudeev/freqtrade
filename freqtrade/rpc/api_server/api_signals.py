@@ -20,7 +20,7 @@ def get_signals(limit: int = 100, config: dict = Depends(get_config)) -> Dict[st
         store = SignalQueueStore(db_path)
         
         # Получаем последние 100 сигналов (самые свежие первыми)
-        with store._get_connection() as conn:
+        with store._connect() as conn:
             conn.row_factory = dict_factory
             cursor = conn.cursor()
             cursor.execute(
