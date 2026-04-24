@@ -114,18 +114,18 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
         }
 
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-        }
-
-        .status-pending .status-dot { background: #f59e0b; }
-        .status-parsed .status-dot { background: #10b981; }
-        .status-failed .status-dot { background: #ef4444; }
-        .status-expired .status-dot { background: #64748b; }
+        .status-failed   { color: #f6465d; }
+        .status-waiting  { color: #f59e0b; }
+        .status-skipped  { color: #94a3b8; }
+        .status-ordered  { color: #3b82f6; }
+        .status-closed-tp { color: #0ebd73; }
+        .status-closed-sl { color: #f6465d; }
+        .status-pending  { color: #f59e0b; }
+        .status-sent     { color: #3b82f6; }
 
         .error-text {
             display: block;
@@ -212,7 +212,6 @@
             <div class="controls">
                 <span id="last-update">Обновление: --</span>
                 <button onclick="openSettings()">Настройки</button>
-                <button onclick="logout()">Отключиться</button>
             </div>
         </header>
         <div class="table-container">
@@ -437,28 +436,39 @@
             return { coin, type, lev, entry, tp, sl };
         }
 
+        function getStatusHtml(status) {
+            // Status map: status string -> class and label
+            const map = {
+                'failed':    ['status-failed',    '❌ failed'],
+                'waiting':   ['status-waiting',   '⏳ waiting'],
+                'skipped':   ['status-skipped',   '⏹ skipped'],
+                'ordered':   ['status-ordered',   '🟦 ordered'],
+                'sent':      ['status-ordered',   '🟦 ordered'], // 'sent' is what worker saves
+                'closed_tp': ['status-closed-tp', '✅ closed (TP)'],
+                'closed_sl': ['status-closed-sl', '❌ closed (SL)'],
+                'pending':   ['status-pending',   '⏳ pending'],
+                'parsed':    ['status-pending',   '⏳ waiting'],
+            };
+            const [cls, label] = map[status] || ['status-skipped', status];
+            return `<span class="status-badge ${cls}">${label}</span>`;
+        }
+
         function renderTable(signals) {
             const tbody = document.getElementById('signals-body');
             tbody.innerHTML = '';
             
             signals.forEach(sig => {
                 const p = parseSignalText(sig.text);
-                if (p.coin === "Unknown" || !p.coin) return; // Skip non-entry or unknown signals
+                if (p.coin === "Unknown" || !p.coin) return;
                 
                 const tr = document.createElement('tr');
                 
-                // Fix invalid date
                 let dStr = sig.created_at;
                 if (!dStr.endsWith('Z')) dStr += 'Z';
                 const d = new Date(dStr);
                 const dateStr = !isNaN(d.getTime()) ? 
                     `${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU')}` : 
                     sig.created_at;
-                
-                let statusClass = 'status-pending';
-                if (sig.status === 'parsed') statusClass = 'status-parsed';
-                else if (sig.status === 'failed') statusClass = 'status-failed';
-                else if (sig.status === 'expired') statusClass = 'status-expired';
                 
                 const typeClass = p.type === 'LONG' ? 'type-long' : 'type-short';
 
@@ -470,14 +480,8 @@
                     <td style="color: #0ebd73;">${p.tp}</td>
                     <td style="color: #f6465d;">${p.sl}</td>
                     <td class="val-muted">${dateStr}</td>
-                    <td>
-                        <div class="status-badge ${statusClass}">
-                            <span style="color: var(--text-main); font-size: 0.8rem;">${sig.status}</span>
-                        </div>
-                    </td>
-                    <td>
-                        <button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">[открыть]</button>
-                    </td>
+                    <td>${getStatusHtml(sig.status)}</td>
+                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">[открыть]</button></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -491,11 +495,15 @@
             document.getElementById('chart-modal').style.display = 'flex';
             
             const chartDom = document.getElementById('tvchart');
-            chartDom.innerHTML = ''; // clear old chart
-            
+            chartDom.innerHTML = '';
+            if (chart) { chart.remove(); chart = null; }
+
+            // Wait a tick so DOM fully renders and clientWidth/clientHeight are real
+            await new Promise(r => setTimeout(r, 50));
+
             chart = LightweightCharts.createChart(chartDom, {
                 width: chartDom.clientWidth,
-                height: chartDom.clientHeight,
+                height: chartDom.clientHeight || 500,
                 layout: {
                     background: { type: 'solid', color: '#0b0e14' },
                     textColor: '#d1d4dc',
