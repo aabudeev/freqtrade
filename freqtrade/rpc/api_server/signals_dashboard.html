@@ -219,13 +219,15 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Фьючерсы</th>
-                        <th>Тип / Плечо</th>
+                        <th>Тикер</th>
+                        <th>Тип</th>
+                        <th>Плечо</th>
                         <th>Диапазон входа</th>
-                        <th>Цель (Тейк)</th>
+                        <th>Тейк-профит</th>
                         <th>Стоп-лосс</th>
-                        <th>Время сигнала</th>
+                        <th>Время</th>
                         <th>Статус</th>
+                        <th>График</th>
                     </tr>
                 </thead>
                 <tbody id="signals-body">
@@ -258,10 +260,21 @@
                 <input type="number" id="set_default_leverage" value="50" step="1">
             </div>
             <button class="btn-primary" onclick="saveSettings()">Сохранить</button>
-            <button onclick="closeSettings()" style="width: 100%; margin-top: 0.5rem; background: transparent; border: 1px solid var(--border-color);">Отмена</button>
+            <button onclick="closeSettings()" style="width: 100%; margin-top: 0.5rem; background: transparent; border: 1px solid var(--border-color); color: #fff;">Отмена</button>
         </div>
     </div>
 
+    <div id="chart-modal" style="display:none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 100; justify-content: center; align-items: center; flex-direction: column;">
+        <div style="width: 90%; max-width: 1200px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;">
+            <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                <h3 id="chart-title" style="margin: 0;">Chart</h3>
+                <button onclick="closeChart()" style="background: var(--short-color); border: none;">Закрыть</button>
+            </div>
+            <div id="tvchart" style="width: 100%; height: 60vh;"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script>
         let pollInterval;
         let ftToken = '';
@@ -420,6 +433,9 @@
             tbody.innerHTML = '';
             
             signals.forEach(sig => {
+                const p = parseSignalText(sig.text);
+                if (p.coin === "Unknown" || !p.coin) return; // Skip non-entry or unknown signals
+                
                 const tr = document.createElement('tr');
                 
                 // Fix invalid date
@@ -427,10 +443,8 @@
                 if (!dStr.endsWith('Z')) dStr += 'Z';
                 const d = new Date(dStr);
                 const dateStr = !isNaN(d.getTime()) ? 
-                    `${d.toLocaleDateString()} ${d.toLocaleTimeString()}` : 
+                    `${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU')}` : 
                     sig.created_at;
-                
-                const p = parseSignalText(sig.text);
                 
                 let statusClass = 'status-pending';
                 if (sig.status === 'parsed') statusClass = 'status-parsed';
@@ -439,32 +453,129 @@
                 
                 const typeClass = p.type === 'LONG' ? 'type-long' : 'type-short';
 
-                const errorHtml = sig.error_message && sig.status === 'failed' ? 
-                    `<span class="error-text">${sig.error_message}</span>` : '';
-
                 tr.innerHTML = `
-                    <td>
-                        <span class="coin-name">${p.coin}</span>
-                        <span class="val-muted">USDT</span>
-                    </td>
-                    <td>
-                        <span class="${typeClass} val-primary">${p.type}</span>
-                        <span class="leverage-badge val-muted">${p.lev}</span>
-                    </td>
+                    <td class="coin-name">${p.coin}</td>
+                    <td class="${typeClass} val-primary">${p.type}</td>
+                    <td class="val-muted">${p.lev}</td>
                     <td class="val-primary">${p.entry}</td>
                     <td style="color: #0ebd73;">${p.tp}</td>
                     <td style="color: #f6465d;">${p.sl}</td>
                     <td class="val-muted">${dateStr}</td>
                     <td>
                         <div class="status-badge ${statusClass}">
-                            <div class="status-dot"></div>
-                            <span style="text-transform: capitalize; color: var(--text-main); font-size: 0.8rem;">${sig.status}</span>
+                            <span style="color: var(--text-main); font-size: 0.8rem;">${sig.status}</span>
                         </div>
-                        ${errorHtml}
+                    </td>
+                    <td>
+                        <button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">[открыть]</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
+        }
+
+        let chart;
+        let lineSeries;
+
+        async function openChart(coin, type, entryStr, tp, sl) {
+            document.getElementById('chart-title').innerText = `${coin}USDT - ${type}`;
+            document.getElementById('chart-modal').style.display = 'flex';
+            
+            const chartDom = document.getElementById('tvchart');
+            chartDom.innerHTML = ''; // clear old chart
+            
+            chart = LightweightCharts.createChart(chartDom, {
+                width: chartDom.clientWidth,
+                height: chartDom.clientHeight,
+                layout: {
+                    background: { type: 'solid', color: '#0b0e14' },
+                    textColor: '#d1d4dc',
+                },
+                grid: {
+                    vertLines: { color: '#1e293b' },
+                    horzLines: { color: '#1e293b' },
+                },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                timeScale: { timeVisible: true, secondsVisible: false },
+            });
+            
+            lineSeries = chart.addCandlestickSeries({
+                upColor: '#0ebd73',
+                downColor: '#f6465d',
+                borderVisible: false,
+                wickUpColor: '#0ebd73',
+                wickDownColor: '#f6465d'
+            });
+
+            try {
+                const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${coin}USDT&interval=15m&limit=100`);
+                const data = await res.json();
+                const chartData = data.map(d => ({
+                    time: d[0] / 1000,
+                    open: parseFloat(d[1]),
+                    high: parseFloat(d[2]),
+                    low: parseFloat(d[3]),
+                    close: parseFloat(d[4])
+                }));
+                lineSeries.setData(chartData);
+                
+                // Add price lines
+                if (tp && tp !== '--') {
+                    lineSeries.createPriceLine({
+                        price: parseFloat(tp),
+                        color: '#0ebd73',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'TP',
+                    });
+                }
+                if (sl && sl !== '--') {
+                    lineSeries.createPriceLine({
+                        price: parseFloat(sl),
+                        color: '#f6465d',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'SL',
+                    });
+                }
+                
+                // parse entry range
+                if (entryStr && entryStr !== '--') {
+                    const entries = entryStr.match(/[0-9.]+/g);
+                    if (entries && entries.length > 0) {
+                        lineSeries.createPriceLine({
+                            price: parseFloat(entries[0]),
+                            color: '#3b82f6',
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: 'Entry 1',
+                        });
+                        if (entries.length > 1) {
+                            lineSeries.createPriceLine({
+                                price: parseFloat(entries[1]),
+                                color: '#3b82f6',
+                                lineWidth: 2,
+                                lineStyle: LightweightCharts.LineStyle.Solid,
+                                axisLabelVisible: true,
+                                title: 'Entry 2',
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Error fetching Binance klines', err);
+            }
+        }
+
+        function closeChart() {
+            document.getElementById('chart-modal').style.display = 'none';
+            if (chart) {
+                chart.remove();
+                chart = null;
+            }
         }
     </script>
 </body>
