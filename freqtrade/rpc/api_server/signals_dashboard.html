@@ -194,6 +194,19 @@
             margin-top: 1rem;
         }
         .btn-primary:hover { background: var(--accent-hover); }
+
+        .tf-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 4px 10px;
+            font-size: 0.78rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .tf-btn:hover { border-color: var(--accent); color: #fff; }
+        .tf-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -265,9 +278,19 @@
 
     <div id="chart-modal" style="display:none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 100; justify-content: center; align-items: center; flex-direction: column;">
         <div style="width: 90%; max-width: 1200px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;">
-            <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                <h3 id="chart-title" style="margin: 0;">Chart</h3>
-                <button onclick="closeChart()" style="background: var(--short-color); border: none;">Закрыть</button>
+            <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                <h3 id="chart-title" style="margin: 0; white-space: nowrap;">Chart</h3>
+                <div id="tf-buttons" style="display: flex; gap: 4px;">
+                    <button class="tf-btn" data-tf="1m" onclick="changeTimeframe('1m')">1м</button>
+                    <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5м</button>
+                    <button class="tf-btn active" data-tf="15m" onclick="changeTimeframe('15m')">15м</button>
+                    <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1ч</button>
+                    <button class="tf-btn" data-tf="4h" onclick="changeTimeframe('4h')">4ч</button>
+                    <button class="tf-btn" data-tf="1d" onclick="changeTimeframe('1d')">1д</button>
+                    <button class="tf-btn" data-tf="1w" onclick="changeTimeframe('1w')">1н</button>
+                    <button class="tf-btn" data-tf="1M" onclick="changeTimeframe('1M')">1М</button>
+                </div>
+                <button onclick="closeChart()" style="background: var(--short-color); border: none; white-space: nowrap;">Закрыть</button>
             </div>
             <div id="tvchart" style="width: 100%; height: 60vh;"></div>
         </div>
@@ -489,102 +512,86 @@
 
         let chart;
         let lineSeries;
+        let currentChartState = null; // { coin, type, entryStr, tp, sl, tf }
 
         async function openChart(coin, type, entryStr, tp, sl) {
+            currentChartState = { coin, type, entryStr, tp, sl, tf: '15m' };
+            _setActiveTfBtn('15m');
             document.getElementById('chart-title').innerText = `${coin}USDT - ${type}`;
             document.getElementById('chart-modal').style.display = 'flex';
-            
+            await _buildChart();
+            await loadChartData();
+        }
+
+        function changeTimeframe(tf) {
+            if (!currentChartState) return;
+            currentChartState.tf = tf;
+            _setActiveTfBtn(tf);
+            loadChartData();
+        }
+
+        function _setActiveTfBtn(tf) {
+            document.querySelectorAll('.tf-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.tf === tf);
+            });
+        }
+
+        async function _buildChart() {
             const chartDom = document.getElementById('tvchart');
             chartDom.innerHTML = '';
             if (chart) { chart.remove(); chart = null; }
-
-            // Wait a tick so DOM fully renders and clientWidth/clientHeight are real
             await new Promise(r => setTimeout(r, 50));
-
             chart = LightweightCharts.createChart(chartDom, {
                 width: chartDom.clientWidth,
                 height: chartDom.clientHeight || 500,
-                layout: {
-                    background: { type: 'solid', color: '#0b0e14' },
-                    textColor: '#d1d4dc',
-                },
-                grid: {
-                    vertLines: { color: '#1e293b' },
-                    horzLines: { color: '#1e293b' },
-                },
+                layout: { background: { type: 'solid', color: '#0b0e14' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
-            
             lineSeries = chart.addCandlestickSeries({
-                upColor: '#0ebd73',
-                downColor: '#f6465d',
-                borderVisible: false,
-                wickUpColor: '#0ebd73',
-                wickDownColor: '#f6465d'
+                upColor: '#0ebd73', downColor: '#f6465d',
+                borderVisible: false, wickUpColor: '#0ebd73', wickDownColor: '#f6465d'
             });
+        }
+
+        async function loadChartData() {
+            if (!currentChartState || !chart) return;
+            const { coin, entryStr, tp, sl, tf } = currentChartState;
+
+            // Rebuild only candles (keep price lines fresh)
+            lineSeries.setData([]);
 
             try {
-                // Use /api/v1/klines — proxied through Freqtrade CCXT exchange connection
-                const res = await fetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=15m&limit=150`, {
+                const res = await fetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=200`, {
                     headers: { 'Authorization': `Bearer ${ftToken}` }
                 });
                 const resJson = await res.json();
-                
+
                 if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
                     lineSeries.setData(resJson.data);
                 } else {
                     console.error('klines error:', resJson);
                 }
-                
-                // Add price lines
+
+                // Price lines
                 if (tp && tp !== '--') {
-                    lineSeries.createPriceLine({
-                        price: parseFloat(tp),
-                        color: '#0ebd73',
-                        lineWidth: 2,
-                        lineStyle: LightweightCharts.LineStyle.Dashed,
-                        axisLabelVisible: true,
-                        title: 'TP',
-                    });
+                    lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
                 }
                 if (sl && sl !== '--') {
-                    lineSeries.createPriceLine({
-                        price: parseFloat(sl),
-                        color: '#f6465d',
-                        lineWidth: 2,
-                        lineStyle: LightweightCharts.LineStyle.Dashed,
-                        axisLabelVisible: true,
-                        title: 'SL',
-                    });
+                    lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
                 }
-                
-                // parse entry range
                 if (entryStr && entryStr !== '--') {
                     const entries = entryStr.match(/[0-9.]+/g);
                     if (entries && entries.length > 0) {
-                        lineSeries.createPriceLine({
-                            price: parseFloat(entries[0]),
-                            color: '#3b82f6',
-                            lineWidth: 2,
-                            lineStyle: LightweightCharts.LineStyle.Solid,
-                            axisLabelVisible: true,
-                            title: 'Entry 1',
-                        });
+                        lineSeries.createPriceLine({ price: parseFloat(entries[0]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 1' });
                         if (entries.length > 1) {
-                            lineSeries.createPriceLine({
-                                price: parseFloat(entries[1]),
-                                color: '#3b82f6',
-                                lineWidth: 2,
-                                lineStyle: LightweightCharts.LineStyle.Solid,
-                                axisLabelVisible: true,
-                                title: 'Entry 2',
-                            });
+                            lineSeries.createPriceLine({ price: parseFloat(entries[1]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 2' });
                         }
                     }
                 }
             } catch (err) {
-                console.error('Error fetching Binance klines', err);
+                console.error('Error loading chart data:', err);
             }
         }
 
