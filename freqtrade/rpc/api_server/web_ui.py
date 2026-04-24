@@ -31,6 +31,17 @@ async def ui_version():
     }
 
 
+@router_ui.get("/signals_ui", response_class=HTMLResponse)
+async def signals_ui():
+    """
+    Отдает HTML страницу дашборда для мониторинга сигналов.
+    """
+    html_path = Path(__file__).parent / "signals_dashboard.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf-8")
+    return "Dashboard HTML file not found."
+
+
 @router_ui.get("/{rest_of_path:path}")
 async def index_html(rest_of_path: str):
     """
@@ -78,7 +89,7 @@ async def index_html(rest_of_path: str):
                 // Создаем iframe для дашборда
                 const iframe = document.createElement('iframe');
                 iframe.id = 'signals-iframe';
-                iframe.src = '/api/v1/signals_ui';
+                iframe.src = '/signals_ui';
                 iframe.style.position = 'fixed';
                 iframe.style.top = '64px'; // под тулбаром
                 iframe.style.left = '0';
