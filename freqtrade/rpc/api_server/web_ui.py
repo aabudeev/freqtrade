@@ -29,6 +29,17 @@ async def ui_version():
         "version": version if version else "not_installed",
     }
 
+@router_ui.get("/signals_dashboard", response_class=HTMLResponse)
+async def signals_dashboard():
+    """
+    Отдает отдельную HTML страницу дашборда для мониторинга сигналов.
+    Без вмешательства в Vue.
+    """
+    html_path = Path(__file__).parent / "signals_dashboard.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf-8")
+    return "Dashboard HTML file not found."
+
 
 @router_ui.get("/{rest_of_path:path}")
 async def index_html(rest_of_path: str):
