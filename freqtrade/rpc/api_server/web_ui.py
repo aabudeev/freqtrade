@@ -38,6 +38,8 @@ async def signals_dashboard():
     html_path = Path(__file__).parent / "signals_dashboard.html"
     if not html_path.exists():
         # Fallback if the file wasn't bundled into site-packages by pip
+        html_path = Path("/freqtrade/fork/freqtrade/rpc/api_server/signals_dashboard.html")
+    if not html_path.exists():
         html_path = Path("/freqtrade/freqtrade/rpc/api_server/signals_dashboard.html")
         
     if html_path.exists():
