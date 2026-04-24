@@ -36,6 +36,10 @@ async def signals_dashboard():
     Без вмешательства в Vue.
     """
     html_path = Path(__file__).parent / "signals_dashboard.html"
+    if not html_path.exists():
+        # Fallback if the file wasn't bundled into site-packages by pip
+        html_path = Path("/freqtrade/freqtrade/rpc/api_server/signals_dashboard.html")
+        
     if html_path.exists():
         return html_path.read_text(encoding="utf-8")
     return "Dashboard HTML file not found."

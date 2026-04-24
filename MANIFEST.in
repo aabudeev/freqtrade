@@ -7,3 +7,4 @@ include freqtrade/rpc/api_server/ui/fallback_file.html
 include freqtrade/rpc/api_server/ui/favicon.ico
 
 prune tests
+include freqtrade/rpc/api_server/signals_dashboard.html
