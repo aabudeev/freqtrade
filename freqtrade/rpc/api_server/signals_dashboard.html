@@ -264,21 +264,9 @@
 </head>
 <body>
 
-    <div id="login-container" class="glass-panel">
-        <h2 style="margin-top: 0;">Freqtrade Auth</h2>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Please log in to view signals</p>
-        <form id="login-form">
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="username" required autocomplete="username">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="password" required autocomplete="current-password">
-            </div>
-            <button type="submit">Login</button>
-            <div id="error-message">Invalid credentials</div>
-        </form>
+    <div id="login-container" class="glass-panel" style="display: none;">
+        <h2 style="margin-top: 0;">Access Denied</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Please log in to Freqtrade UI first.</p>
     </div>
 
     <div id="dashboard-container" class="container" style="display: none;">
@@ -319,47 +307,43 @@
 
     <script>
         let pollInterval;
+        let ftToken = '';
         
-        // Setup UI
         document.addEventListener('DOMContentLoaded', () => {
-            const token = localStorage.getItem('ft_token');
-            if (token) {
-                showDashboard();
-            }
-        });
-
-        document.getElementById('login-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const u = document.getElementById('username').value;
-            const p = document.getElementById('password').value;
-            
-            try {
-                const formData = new FormData();
-                formData.append('username', u);
-                formData.append('password', p);
-
-                const res = await fetch('/api/v1/token', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (res.ok) {
-                    const data = await res.json();
-                    localStorage.setItem('ft_token', data.access_token);
-                    document.getElementById('error-message').style.display = 'none';
-                    showDashboard();
-                } else {
-                    document.getElementById('error-message').style.display = 'block';
+            // FreqUI stores token in localStorage, either as 'jwt' or we can find it by looking for eyJ...
+            ftToken = localStorage.getItem('jwt');
+            if (!ftToken) {
+                // Пытаемся найти токен перебором
+                for(let i=0; i<localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const val = localStorage.getItem(key);
+                    if(val && val.startsWith && val.startsWith('eyJ')) {
+                        ftToken = val;
+                        break;
+                    }
                 }
-            } catch (err) {
-                console.error(err);
-                document.getElementById('error-message').innerText = 'Connection error';
-                document.getElementById('error-message').style.display = 'block';
+            }
+            // Также проверим sessionStorage
+            if(!ftToken) {
+                 for(let i=0; i<sessionStorage.length; i++) {
+                    const key = sessionStorage.key(i);
+                    const val = sessionStorage.getItem(key);
+                    if(val && val.startsWith && val.startsWith('eyJ')) {
+                        ftToken = val;
+                        break;
+                    }
+                }
+            }
+
+            if (ftToken) {
+                showDashboard();
+            } else {
+                document.getElementById('login-container').style.display = 'block';
             }
         });
 
         function logout() {
-            localStorage.removeItem('ft_token');
+            // We don't actually logout from FreqUI, we just stop polling
             document.getElementById('dashboard-container').style.display = 'none';
             document.getElementById('login-container').style.display = 'block';
             clearInterval(pollInterval);
@@ -373,10 +357,9 @@
         }
 
         async function fetchSignals() {
-            const token = localStorage.getItem('ft_token');
             try {
                 const res = await fetch('/api/v1/signals', {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${ftToken}` }
                 });
                 
                 if (res.status === 401) {
