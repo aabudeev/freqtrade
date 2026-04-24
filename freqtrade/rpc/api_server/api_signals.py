@@ -48,3 +48,31 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
+@router.get("/signals_settings", tags=["Signals"])
+def get_signals_settings(config: dict = Depends(get_config)) -> Dict[str, Any]:
+    try:
+        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        store = SignalQueueStore(db_path)
+        return store.get_settings()
+    except Exception as e:
+        logger.exception("Error fetching settings")
+        return {"error": str(e)}
+
+@router.post("/signals_settings", tags=["Signals"])
+async def update_signals_settings(request: dict, config: dict = Depends(get_config)) -> Dict[str, Any]:
+    try:
+        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        store = SignalQueueStore(db_path)
+        
+        # Filter only allowed keys
+        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage']
+        filtered = {k: v for k, v in request.items() if k in allowed_keys}
+        
+        if filtered:
+            store.update_settings(filtered)
+            
+        return {"status": "ok", "settings": store.get_settings()}
+    except Exception as e:
+        logger.exception("Error updating settings")
+        return {"error": str(e)}

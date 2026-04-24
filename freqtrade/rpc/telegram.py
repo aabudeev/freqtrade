@@ -308,6 +308,7 @@ class Telegram(RPCHandler):
             CommandHandler("tg_info", self._tg_info),
             CommandHandler("profit_long", self._profit_long),
             CommandHandler("profit_short", self._profit_short),
+            CommandHandler("set_stake", self._set_stake),
         ]
         callbacks = [
             CallbackQueryHandler(self._status_table, pattern="update_status_table"),
@@ -695,6 +696,46 @@ class Telegram(RPCHandler):
         :param update: message update
         :return: None
         """
+
+    @authorized_only
+    async def _set_stake(self, update: Update, context: CallbackContext) -> None:
+        """
+        Handler for /set_stake.
+        """
+        args = context.args or []
+        if len(args) < 2:
+            await self._send_msg("Usage: /set_stake fixed <amount> OR /set_stake percentage <%>")
+            return
+
+        mode = args[0].lower()
+        val_str = args[1].replace('%', '')
+        try:
+            val = float(val_str)
+        except ValueError:
+            await self._send_msg("Invalid amount or percentage")
+            return
+
+        settings = {}
+        if mode in ['fixed', 'f', 'fix']:
+            settings['stake_mode'] = 'fixed'
+            settings['stake_fixed_amount'] = val
+            msg = f"✅ Риск-менеджмент: Фиксированная сумма ${val}"
+        elif mode in ['percentage', 'perc', 'p', '%']:
+            settings['stake_mode'] = 'percentage'
+            settings['stake_percentage'] = val
+            msg = f"✅ Риск-менеджмент: Процент от депо {val}%"
+        else:
+            await self._send_msg("Unknown mode. Use 'fixed' or 'percentage'")
+            return
+
+        try:
+            from freqtrade.signals.queue_store import SignalQueueStore
+            db_path = Path(self._config["user_data_dir"]) / "signals_queue.sqlite"
+            store = SignalQueueStore(db_path)
+            store.update_settings(settings)
+            await self._send_msg(msg)
+        except Exception as e:
+            await self._send_msg(f"Error saving settings: {e}")
 
         trade_ids = []
         if context.args and len(context.args) > 0:

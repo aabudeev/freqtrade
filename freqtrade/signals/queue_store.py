@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS ingest_queue (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ingest_status ON ingest_queue(status);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_mode', 'fixed');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_fixed_amount', '10');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_percentage', '3');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('default_leverage', '50');
 """
 
 
@@ -130,3 +139,36 @@ class SignalQueueStore:
                 )
                 con.commit()
 
+
+    def get_settings(self) -> dict:
+        with self._lock:
+            with self._connect() as con:
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute("SELECT key, value FROM settings")
+                rows = cur.fetchall()
+                settings = {}
+                for row in rows:
+                    key = row['key']
+                    val = row['value']
+                    # Try to convert to int/float if possible
+                    if val.isdigit():
+                        val = int(val)
+                    else:
+                        try:
+                            val = float(val)
+                        except ValueError:
+                            pass
+                    settings[key] = val
+                return settings
+
+    def update_settings(self, new_settings: dict) -> None:
+        with self._lock:
+            with self._connect() as con:
+                cur = con.cursor()
+                for key, val in new_settings.items():
+                    cur.execute(
+                        "UPDATE settings SET value = ? WHERE key = ?",
+                        (str(val), key)
+                    )
+                con.commit()

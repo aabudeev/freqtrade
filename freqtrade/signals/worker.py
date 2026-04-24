@@ -61,17 +61,37 @@ class SignalWorker:
                         if event.type == SignalType.ENTRY:
                             from freqtrade.enums import SignalDirection
                             
-                            # Для входа берем нижнюю границу (или единственную цену)
-                            price = event.entry_range[0] if event.entry_range else None
+                            # Входим по рынку одним ордером (Market)
+                            price = None  # Игнорируем цену сигнала для первого рыночного входа
                             order_side = SignalDirection.SHORT if event.side == SignalSide.SHORT else SignalDirection.LONG
                             
+                            settings = self.store.get_settings()
+                            stake_amount = None
+                            if settings.get('stake_mode') == 'fixed':
+                                stake_amount = float(settings.get('stake_fixed_amount', 10.0))
+                            elif settings.get('stake_mode') == 'percentage':
+                                perc = float(settings.get('stake_percentage', 3.0)) / 100.0
+                                stake_currency = self.bot.config.get('stake_currency', 'USDT')
+                                try:
+                                    free_bal = self.bot.wallets.get_free(stake_currency)
+                                    stake_amount = free_bal * perc
+                                    logger.info(f"Рассчитан размер входа: {stake_amount} {stake_currency} ({perc*100}% от свободного {free_bal})")
+                                except Exception as e:
+                                    logger.error(f"Не удалось получить баланс: {e}")
+                                    stake_amount = 10.0 # fallback
+                            
+                            leverage = event.leverage
+                            if not leverage:
+                                leverage = float(settings.get('default_leverage', 50.0))
+
                             trade = self.bot.rpc._rpc._rpc_force_entry(
                                 pair=event.symbol,
                                 price=price,
-                                order_type="limit" if price else "market",
+                                order_type="market",
                                 order_side=order_side,
+                                stake_amount=stake_amount,
                                 enter_tag=f"telegram_{key[:8]}",
-                                leverage=event.leverage
+                                leverage=leverage
                             )
                             
                             if trade:
