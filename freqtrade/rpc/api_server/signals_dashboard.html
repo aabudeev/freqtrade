@@ -525,7 +525,9 @@
             });
 
             try {
-                const res = await fetch(`https://open-api.bingx.com/openApi/swap/v2/quote/klines?symbol=${coin}-USDT&interval=15m&limit=100`);
+                const res = await fetch(`/api/v1/klines?symbol=${coin}-USDT&interval=15m&limit=150`, {
+                    headers: { 'Authorization': `Bearer ${ftToken}` }
+                });
                 const resJson = await res.json();
                 
                 if (resJson.code === 0 && resJson.data) {
