@@ -89,3 +89,44 @@ class SignalQueueStore:
 
     def pending_count(self) -> int:
         return self.count_by_status("pending")
+
+    def claim_pending(self, limit: int = 10) -> list[dict]:
+        """
+        Забирает до `limit` записей со статусом 'pending' и переводит их в 'processing'.
+        Возвращает список словарей-записей.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None).isoformat()
+        with self._lock:
+            with self._connect() as con:
+                con.row_factory = sqlite3.Row
+                rows = con.execute(
+                    "SELECT * FROM ingest_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+                
+                if not rows:
+                    return []
+                
+                keys = [r["idempotency_key"] for r in rows]
+                placeholders = ",".join("?" for _ in keys)
+                con.execute(
+                    f"UPDATE ingest_queue SET status = 'processing', updated_at = ? WHERE idempotency_key IN ({placeholders})",
+                    [now] + keys
+                )
+                con.commit()
+                return [dict(r) for r in rows]
+
+    def mark_status(self, idempotency_key: str, status: str, error_message: str | None = None) -> None:
+        """
+        Обновляет статус записи (например, на 'parsed', 'failed', 'sent').
+        Сохраняет сообщение об ошибке, если оно передано.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None).isoformat()
+        with self._lock:
+            with self._connect() as con:
+                con.execute(
+                    "UPDATE ingest_queue SET status = ?, error_message = ?, updated_at = ? WHERE idempotency_key = ?",
+                    (status, error_message, now, idempotency_key)
+                )
+                con.commit()
+

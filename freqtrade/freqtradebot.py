@@ -140,6 +140,7 @@ class FreqtradeBot(LoggingMixin):
 
             # Telethon listener → SQLite ingest queue (same path as replay JSON)
             self.telegram_signals_listener = None
+            self.signal_worker = None
             try:
                 from freqtrade.signals.telegram_listener import (
                     TelegramSignalsListener,
@@ -149,6 +150,10 @@ class FreqtradeBot(LoggingMixin):
                 if telegram_signals_listener_enabled():
                     self.telegram_signals_listener = TelegramSignalsListener(self.config)
                     self.telegram_signals_listener.start()
+                    
+                    from freqtrade.signals.worker import SignalWorker
+                    self.signal_worker = SignalWorker(self.telegram_signals_listener.store, bot=self)
+                    self.signal_worker.start()
             except Exception:
                 logger.exception("Failed to start Telegram signals listener")
 
@@ -236,6 +241,8 @@ class FreqtradeBot(LoggingMixin):
 
         if getattr(self, "telegram_signals_listener", None):
             self.telegram_signals_listener.shutdown()
+        if getattr(self, "signal_worker", None):
+            self.signal_worker.stop()
 
         if getattr(self, "rpc", None):
             self.rpc.cleanup()

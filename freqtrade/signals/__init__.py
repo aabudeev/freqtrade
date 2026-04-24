@@ -13,6 +13,13 @@ from freqtrade.signals.telethon_message import (
     message_dict_to_ingest_event,
 )
 from freqtrade.signals.telethon_proxy import telethon_proxy_from_env
+from freqtrade.signals.parser import (
+    SignalEvent,
+    SignalType,
+    SignalSide,
+    parse_signal_text,
+)
+from freqtrade.signals.worker import SignalWorker
 
 __all__ = [
     "SignalIngestEvent",
@@ -24,4 +31,9 @@ __all__ = [
     "resolve_channel_peer_id",
     "SignalQueueStore",
     "telethon_proxy_from_env",
+    "SignalEvent",
+    "SignalType",
+    "SignalSide",
+    "parse_signal_text",
+    "SignalWorker",
 ]

@@ -30,3 +30,45 @@ def test_enqueue_idempotent(tmp_path):
     assert st.enqueue(ev) is True
     assert st.enqueue(ev) is False
     assert st.pending_count() == 1
+
+def test_claim_pending(tmp_path):
+    st = SignalQueueStore(tmp_path / "q.sqlite")
+    st.enqueue(_ev("1"))
+    st.enqueue(_ev("2"))
+    st.enqueue(_ev("3"))
+    
+    assert st.pending_count() == 3
+    
+    # Claim 2
+    claimed = st.claim_pending(limit=2)
+    assert len(claimed) == 2
+    assert claimed[0]["idempotency_key"] == "telegram:1:1"
+    assert claimed[1]["idempotency_key"] == "telegram:1:2"
+    
+    assert st.pending_count() == 1
+    assert st.count_by_status("processing") == 2
+    
+    # Claim remaining 1
+    claimed2 = st.claim_pending(limit=2)
+    assert len(claimed2) == 1
+    assert claimed2[0]["idempotency_key"] == "telegram:1:3"
+    
+    assert st.pending_count() == 0
+    assert st.count_by_status("processing") == 3
+
+def test_mark_status(tmp_path):
+    st = SignalQueueStore(tmp_path / "q.sqlite")
+    st.enqueue(_ev("1"))
+    
+    # Claim it
+    claimed = st.claim_pending(limit=1)
+    assert len(claimed) == 1
+    
+    st.mark_status(claimed[0]["idempotency_key"], "parsed")
+    assert st.count_by_status("processing") == 0
+    assert st.count_by_status("parsed") == 1
+    
+    st.mark_status(claimed[0]["idempotency_key"], "failed", "Some error")
+    assert st.count_by_status("parsed") == 0
+    assert st.count_by_status("failed") == 1
+
