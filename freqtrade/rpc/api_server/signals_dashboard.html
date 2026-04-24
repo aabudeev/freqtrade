@@ -527,6 +527,7 @@
             if (!currentChartState) return;
             currentChartState.tf = tf;
             _setActiveTfBtn(tf);
+            _rebuildSeries(); // recreate series to clear accumulated price lines
             loadChartData();
         }
 
@@ -549,6 +550,12 @@
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
+            _rebuildSeries();
+        }
+
+        function _rebuildSeries() {
+            if (!chart) return;
+            if (lineSeries) chart.removeSeries(lineSeries);
             lineSeries = chart.addCandlestickSeries({
                 upColor: '#0ebd73', downColor: '#f6465d',
                 borderVisible: false, wickUpColor: '#0ebd73', wickDownColor: '#f6465d'
@@ -557,10 +564,7 @@
 
         async function loadChartData() {
             if (!currentChartState || !chart) return;
-            const { coin, entryStr, tp, sl, tf } = currentChartState;
-
-            // Rebuild only candles (keep price lines fresh)
-            lineSeries.setData([]);
+            const { coin, tp, sl, tf } = currentChartState;
 
             try {
                 const res = await fetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=200`, {
@@ -574,21 +578,12 @@
                     console.error('klines error:', resJson);
                 }
 
-                // Price lines
+                // Thin price lines — TP green, SL red
                 if (tp && tp !== '--') {
-                    lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
+                    lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
                 }
                 if (sl && sl !== '--') {
-                    lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
-                }
-                if (entryStr && entryStr !== '--') {
-                    const entries = entryStr.match(/[0-9.]+/g);
-                    if (entries && entries.length > 0) {
-                        lineSeries.createPriceLine({ price: parseFloat(entries[0]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 1' });
-                        if (entries.length > 1) {
-                            lineSeries.createPriceLine({ price: parseFloat(entries[1]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 2' });
-                        }
-                    }
+                    lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
                 }
             } catch (err) {
                 console.error('Error loading chart data:', err);
