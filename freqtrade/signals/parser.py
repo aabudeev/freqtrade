@@ -33,12 +33,12 @@ class SignalEvent:
 # Цель: 0.180
 # Стоп: 0.140
 # Плечо: 10x (опционально)
-_ENTRY_SIDE_PATTERN = re.compile(r"^\s*(LONG|SHORT)\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_SYMBOL_PATTERN = re.compile(r"^\s*Монета:\s*([A-Za-z0-9]+)\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_PRICE_PATTERN = re.compile(r"^\s*Вход:\s*([\d\.]+)(?:\s*-\s*([\d\.]+))?\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_TARGET_PATTERN = re.compile(r"^\s*Цель:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_STOP_PATTERN = re.compile(r"^\s*Стоп:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_LEVERAGE_PATTERN = re.compile(r"^\s*Плечо:\s*(\d+)x?\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_SIDE_PATTERN = re.compile(r"^\s*(?:📈|📉)?\s*(LONG|SHORT)\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_SYMBOL_PATTERN = re.compile(r"^\s*(?:▪)?\s*Монета:\s*([A-Za-z0-9]+)\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_PRICE_PATTERN = re.compile(r"^\s*(?:▪)?\s*Вход:\s*(?:от\s*)?([\d\.]+)(?:\s*(?:-|до)\s*([\d\.]+))?\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_TARGET_PATTERN = re.compile(r"^\s*(?:▪)?\s*Цель:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_STOP_PATTERN = re.compile(r"^\s*(?:▪)?\s*Стоп:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_LEVERAGE_PATTERN = re.compile(r"^\s*(?:▪)?\s*Плечо:\s*(?:\d+-)?(\d+)[xх]?\s*$", re.IGNORECASE | re.MULTILINE)
 
 # Регулярные выражения для выхода
 # Ожидается: DOGE - тейк ✅ или SUI - стоп
