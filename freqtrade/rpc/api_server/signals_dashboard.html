@@ -300,33 +300,6 @@
     <script>
         let pollInterval;
         let ftToken = '';
-        let ftRefreshToken = '';
-
-        // Wrapper: auto-refresh token on 401 and retry once
-        async function apiFetch(url, options = {}) {
-            options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
-            let res = await fetch(url, options);
-            if (res.status === 401 && ftRefreshToken) {
-                // Try to get a new access token
-                const refreshRes = await fetch('/api/v1/token/refresh', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
-                });
-                if (refreshRes.ok) {
-                    const refreshData = await refreshRes.json();
-                    ftToken = refreshData.access_token;
-                    // Persist back to vuex so FreqUI also uses the new token
-                    try {
-                        const vuex = JSON.parse(localStorage.getItem('vuex') || '{}');
-                        if (vuex.auth) { vuex.auth.token = ftToken; localStorage.setItem('vuex', JSON.stringify(vuex)); }
-                    } catch (e) {}
-                    // Retry the original request with the new token
-                    options.headers['Authorization'] = `Bearer ${ftToken}`;
-                    res = await fetch(url, options);
-                }
-            }
-            return res;
-        }
 
         document.addEventListener('DOMContentLoaded', () => {
             let debugMsg = "No token found.\nKeys: ";
@@ -339,7 +312,6 @@
                 if (authStr) {
                     const auth = JSON.parse(authStr);
                     if (auth && auth.token) ftToken = auth.token;
-                    if (auth && auth.refresh_token) ftRefreshToken = auth.refresh_token;
                 }
             } catch (e) {}
 
@@ -349,7 +321,6 @@
                     if (vuexStr) {
                         const vuex = JSON.parse(vuexStr);
                         if (vuex && vuex.auth && vuex.auth.token) ftToken = vuex.auth.token;
-                        if (vuex && vuex.auth && vuex.auth.refresh_token) ftRefreshToken = vuex.auth.refresh_token;
                     }
                 } catch (e) {}
             }
@@ -432,10 +403,13 @@
 
         async function fetchSignals() {
             try {
-                const res = await apiFetch('/api/v1/signals');
+                const res = await fetch('/api/v1/signals', {
+                    headers: { 'Authorization': `Bearer ${ftToken}` }
+                });
                 
                 if (res.status === 401) {
-                    document.getElementById('debug-info').innerText += "\nSession expired. Please re-login.";
+                    document.getElementById('debug-info').innerText += "\nAPI returned 401 Unauthorized!";
+                    logout();
                     return;
                 }
                 
@@ -553,7 +527,6 @@
             if (!currentChartState) return;
             currentChartState.tf = tf;
             _setActiveTfBtn(tf);
-            _rebuildSeries(); // recreate series to clear accumulated price lines
             loadChartData();
         }
 
@@ -576,12 +549,6 @@
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
-            _rebuildSeries();
-        }
-
-        function _rebuildSeries() {
-            if (!chart) return;
-            if (lineSeries) chart.removeSeries(lineSeries);
             lineSeries = chart.addCandlestickSeries({
                 upColor: '#0ebd73', downColor: '#f6465d',
                 borderVisible: false, wickUpColor: '#0ebd73', wickDownColor: '#f6465d'
@@ -590,37 +557,42 @@
 
         async function loadChartData() {
             if (!currentChartState || !chart) return;
-            const { coin, tp, sl, tf } = currentChartState;
+            const { coin, entryStr, tp, sl, tf } = currentChartState;
 
-            const MAX_RETRIES = 2;
-            let lastErr = null;
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                    const res = await apiFetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=200`);
-                    const resJson = await res.json();
+            // Rebuild only candles (keep price lines fresh)
+            lineSeries.setData([]);
 
-                    if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
-                        lineSeries.setData(resJson.data);
-                    } else {
-                        console.error('klines error:', resJson);
-                        if (attempt < MAX_RETRIES - 1) continue;
-                    }
+            try {
+                const res = await fetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=200`, {
+                    headers: { 'Authorization': `Bearer ${ftToken}` }
+                });
+                const resJson = await res.json();
 
-                    // Thin price lines — TP green, SL red
-                    if (tp && tp !== '--') {
-                        lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
-                    }
-                    if (sl && sl !== '--') {
-                        lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
-                    }
-                    return; // success
-                } catch (err) {
-                    lastErr = err;
-                    console.warn(`klines attempt ${attempt + 1} failed:`, err);
-                    await new Promise(r => setTimeout(r, 1000)); // wait 1s before retry
+                if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
+                    lineSeries.setData(resJson.data);
+                } else {
+                    console.error('klines error:', resJson);
                 }
+
+                // Price lines
+                if (tp && tp !== '--') {
+                    lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
+                }
+                if (sl && sl !== '--') {
+                    lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
+                }
+                if (entryStr && entryStr !== '--') {
+                    const entries = entryStr.match(/[0-9.]+/g);
+                    if (entries && entries.length > 0) {
+                        lineSeries.createPriceLine({ price: parseFloat(entries[0]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 1' });
+                        if (entries.length > 1) {
+                            lineSeries.createPriceLine({ price: parseFloat(entries[1]), color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry 2' });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Error loading chart data:', err);
             }
-            console.error('Error loading chart data after retries:', lastErr);
         }
 
         function closeChart() {
