@@ -404,7 +404,11 @@
                 }
                 
                 const data = await res.json();
-                renderTable(data);
+                if (data.signals && Array.isArray(data.signals)) {
+                    renderTable(data.signals);
+                } else {
+                    renderTable(data); // fallback if it's somehow an array directly
+                }
                 
                 const now = new Date();
                 document.getElementById('last-update').innerText = `Last update: ${now.toLocaleTimeString()}`;
