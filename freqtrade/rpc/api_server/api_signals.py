@@ -92,7 +92,7 @@ def get_klines(symbol: str = "BTC/USDT:USDT", timeframe: str = "15m", limit: int
         exchange = rpc._freqtrade.exchange
         from freqtrade.enums import CandleType
         # fetch_ohlcv returns [[ts_ms, o, h, l, c, v], ...]
-        raw = exchange.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        raw = exchange._api.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         data = [
             {"time": int(c[0]) // 1000, "open": c[1], "high": c[2], "low": c[3], "close": c[4]}
             for c in raw
