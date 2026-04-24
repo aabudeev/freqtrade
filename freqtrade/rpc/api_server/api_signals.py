@@ -1,11 +1,10 @@
 import logging
-import urllib.request
-import json as _json
 from typing import List, Dict, Any
 from pathlib import Path
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
-from freqtrade.rpc.api_server.deps import get_config
+from freqtrade.rpc.api_server.deps import get_config, get_rpc_optional
+from freqtrade.rpc import RPC
 from freqtrade.signals.queue_store import SignalQueueStore
 
 logger = logging.getLogger(__name__)
@@ -79,3 +78,26 @@ async def update_signals_settings(request: dict, config: dict = Depends(get_conf
         logger.exception("Error updating settings")
         return {"error": str(e)}
 
+
+@router.get("/klines", tags=["Signals"])
+def get_klines(symbol: str = "BTC/USDT:USDT", timeframe: str = "15m", limit: int = 150) -> Dict[str, Any]:
+    """
+    Fetch OHLCV candles via Freqtrade's CCXT exchange connection (works regardless of bot state).
+    symbol should be in CCXT format: LINK/USDT:USDT
+    """
+    rpc: RPC | None = get_rpc_optional()
+    if rpc is None:
+        return {"code": -1, "msg": "RPC not available", "data": []}
+    try:
+        exchange = rpc._freqtrade.exchange
+        from freqtrade.enums import CandleType
+        # fetch_ohlcv returns [[ts_ms, o, h, l, c, v], ...]
+        raw = exchange.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        data = [
+            {"time": int(c[0]) // 1000, "open": c[1], "high": c[2], "low": c[3], "close": c[4]}
+            for c in raw
+        ]
+        return {"code": 0, "data": data}
+    except Exception as e:
+        logger.exception("Error fetching klines via exchange")
+        return {"code": -1, "msg": str(e), "data": []}

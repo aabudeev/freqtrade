@@ -525,24 +525,16 @@
             });
 
             try {
-                // Use Freqtrade's built-in CCXT pair_candles endpoint (no CORS issues)
-                const res = await fetch(`/api/v1/pair_candles?pair=${coin}/USDT:USDT&timeframe=15m&limit=150`, {
+                // Use /api/v1/klines — proxied through Freqtrade CCXT exchange connection
+                const res = await fetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=15m&limit=150`, {
                     headers: { 'Authorization': `Bearer ${ftToken}` }
                 });
                 const resJson = await res.json();
                 
-                // pair_candles returns {pair, timeframe, data: [[ts, o, h, l, c, v], ...]}
-                if (resJson && resJson.data && resJson.data.length > 0) {
-                    const chartData = resJson.data.map(d => ({
-                        time: d[0],   // already in seconds
-                        open: d[1],
-                        high: d[2],
-                        low: d[3],
-                        close: d[4]
-                    }));
-                    lineSeries.setData(chartData);
+                if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
+                    lineSeries.setData(resJson.data);
                 } else {
-                    console.error('pair_candles returned no data', resJson);
+                    console.error('klines error:', resJson);
                 }
                 
                 // Add price lines
