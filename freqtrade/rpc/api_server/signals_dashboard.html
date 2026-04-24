@@ -310,14 +310,26 @@
         let ftToken = '';
         
         document.addEventListener('DOMContentLoaded', () => {
-            // FreqUI stores token in localStorage, either as 'jwt' or we can find it by looking for eyJ...
-            ftToken = localStorage.getItem('jwt');
+            // FreqUI stores token in localStorage inside 'vuex'
+            try {
+                const vuexStr = localStorage.getItem('vuex');
+                if (vuexStr) {
+                    const vuex = JSON.parse(vuexStr);
+                    if (vuex && vuex.auth && vuex.auth.token) {
+                        ftToken = vuex.auth.token;
+                    }
+                }
+            } catch (e) {}
+
+            if (!ftToken) {
+                ftToken = localStorage.getItem('jwt');
+            }
             if (!ftToken) {
                 // Пытаемся найти токен перебором
                 for(let i=0; i<localStorage.length; i++) {
                     const key = localStorage.key(i);
                     const val = localStorage.getItem(key);
-                    if(val && val.startsWith && val.startsWith('eyJ')) {
+                    if(val && typeof val === 'string' && val.startsWith('eyJ')) {
                         ftToken = val;
                         break;
                     }
