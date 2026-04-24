@@ -1,12 +1,24 @@
 import logging
 from typing import List, Dict, Any
+from pathlib import Path
 from fastapi import APIRouter, Depends
+from fastapi.responses import HTMLResponse
 from freqtrade.rpc.api_server.deps import get_config
 from freqtrade.signals.queue_store import SignalQueueStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+@router.get("/signals_ui", tags=["Signals UI"], response_class=HTMLResponse)
+def get_signals_ui():
+    """
+    Отдает HTML страницу дашборда для мониторинга сигналов.
+    """
+    html_path = Path(__file__).parent / "signals_dashboard.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf-8")
+    return "Dashboard HTML file not found."
 
 @router.get("/signals", tags=["Signals"])
 def get_signals(limit: int = 100, config: dict = Depends(get_config)) -> Dict[str, Any]:

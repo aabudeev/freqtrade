@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signals Dashboard | Freqtrade</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --glass-bg: rgba(20, 25, 40, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            
+            --status-pending: #f59e0b;
+            --status-parsed: #10b981;
+            --status-failed: #ef4444;
+            --status-expired: #64748b;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.8rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            background: linear-gradient(to right, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* Login Form */
+        #login-container {
+            max-width: 400px;
+            margin: 10vh auto;
+            text-align: center;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: white;
+            font-family: inherit;
+            box-sizing: border-box;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+
+        button {
+            width: 100%;
+            padding: 0.75rem 1.5rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 1rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            border-bottom: 1px solid var(--glass-border);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        tbody tr {
+            transition: background-color 0.2s;
+        }
+
+        tbody tr:hover {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .status-pending { background: rgba(245, 158, 11, 0.15); color: var(--status-pending); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .status-parsed { background: rgba(16, 185, 129, 0.15); color: var(--status-parsed); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .status-failed { background: rgba(239, 68, 68, 0.15); color: var(--status-failed); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-expired { background: rgba(100, 116, 139, 0.15); color: var(--status-expired); border: 1px solid rgba(100, 116, 139, 0.3); }
+
+        .raw-text {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.5rem;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            max-width: 300px;
+            word-break: break-word;
+        }
+
+        .error-text {
+            color: #fca5a5;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+        }
+
+        #error-message {
+            color: var(--status-failed);
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            display: none;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .last-update {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .btn-small {
+            width: auto;
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+        }
+        
+        .btn-small:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        /* Modal */
+        #modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+        }
+
+        .modal-content {
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        pre {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            color: #a78bfa;
+        }
+
+        .close-btn {
+            float: right;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            width: auto;
+        }
+        .close-btn:hover { color: white; background: transparent; }
+    </style>
+</head>
+<body>
+
+    <div id="login-container" class="glass-panel">
+        <h2 style="margin-top: 0;">Freqtrade Auth</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Please log in to view signals</p>
+        <form id="login-form">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="username" required autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" required autocomplete="current-password">
+            </div>
+            <button type="submit">Login</button>
+            <div id="error-message">Invalid credentials</div>
+        </form>
+    </div>
+
+    <div id="dashboard-container" class="container" style="display: none;">
+        <header>
+            <h1>Signals Pipeline</h1>
+            <div class="controls">
+                <span class="last-update" id="last-update">Last update: --</span>
+                <button class="btn-small" onclick="logout()">Logout</button>
+            </div>
+        </header>
+
+        <div class="glass-panel table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Source</th>
+                        <th>Status</th>
+                        <th>Raw Signal</th>
+                        <th>Parsed Payload</th>
+                    </tr>
+                </thead>
+                <tbody id="signals-body">
+                    <!-- Data populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal" onclick="if(event.target===this) closeModal()">
+        <div class="glass-panel modal-content">
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+            <h3 style="margin-top: 0">Payload Details</h3>
+            <pre id="modal-json"></pre>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval;
+        
+        // Setup UI
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('ft_token');
+            if (token) {
+                showDashboard();
+            }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            
+            try {
+                const formData = new FormData();
+                formData.append('username', u);
+                formData.append('password', p);
+
+                const res = await fetch('/api/v1/token', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    localStorage.setItem('ft_token', data.access_token);
+                    document.getElementById('error-message').style.display = 'none';
+                    showDashboard();
+                } else {
+                    document.getElementById('error-message').style.display = 'block';
+                }
+            } catch (err) {
+                console.error(err);
+                document.getElementById('error-message').innerText = 'Connection error';
+                document.getElementById('error-message').style.display = 'block';
+            }
+        });
+
+        function logout() {
+            localStorage.removeItem('ft_token');
+            document.getElementById('dashboard-container').style.display = 'none';
+            document.getElementById('login-container').style.display = 'block';
+            clearInterval(pollInterval);
+        }
+
+        function showDashboard() {
+            document.getElementById('login-container').style.display = 'none';
+            document.getElementById('dashboard-container').style.display = 'block';
+            fetchSignals();
+            pollInterval = setInterval(fetchSignals, 5000);
+        }
+
+        async function fetchSignals() {
+            const token = localStorage.getItem('ft_token');
+            try {
+                const res = await fetch('/api/v1/signals', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (res.status === 401) {
+                    logout();
+                    return;
+                }
+                
+                const data = await res.json();
+                renderTable(data);
+                
+                const now = new Date();
+                document.getElementById('last-update').innerText = `Last update: ${now.toLocaleTimeString()}`;
+            } catch (err) {
+                console.error('Fetch error:', err);
+            }
+        }
+
+        function renderTable(signals) {
+            const tbody = document.getElementById('signals-body');
+            tbody.innerHTML = '';
+            
+            signals.forEach(sig => {
+                const tr = document.createElement('tr');
+                
+                const d = new Date(sig.created_at * 1000);
+                const dateStr = `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+                
+                let statusClass = 'status-pending';
+                if (sig.status === 'parsed') statusClass = 'status-parsed';
+                else if (sig.status === 'failed') statusClass = 'status-failed';
+                else if (sig.status === 'expired') statusClass = 'status-expired';
+                
+                const errorHtml = sig.error_message ? `<div class="error-text">${sig.error_message}</div>` : '';
+                
+                const payloadStr = sig.raw_payload ? JSON.stringify(sig.raw_payload) : '';
+                const btnHtml = sig.raw_payload ? 
+                    `<button class="btn-small" onclick='showModal(${JSON.stringify(payloadStr)})'>View JSON</button>` : 
+                    '<span style="color:var(--text-muted)">N/A</span>';
+
+                tr.innerHTML = `
+                    <td style="white-space: nowrap">${dateStr}</td>
+                    <td>${sig.source}</td>
+                    <td>
+                        <span class="status-badge ${statusClass}">${sig.status}</span>
+                        ${errorHtml}
+                    </td>
+                    <td><div class="raw-text">${sig.text || 'N/A'}</div></td>
+                    <td>${btnHtml}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function showModal(jsonStr) {
+            try {
+                const obj = JSON.parse(jsonStr);
+                document.getElementById('modal-json').innerText = JSON.stringify(obj, null, 2);
+            } catch (e) {
+                document.getElementById('modal-json').innerText = jsonStr;
+            }
+            document.getElementById('modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
