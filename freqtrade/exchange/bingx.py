@@ -321,7 +321,7 @@ class Bingx(Exchange):
             )
         )
         total_swaps = len(symbols)
-        pair_whitelist = self._config.get("exchange", {}).get("sandbox") or self._config.get("exchange", {}).get("pair_whitelist") or []
+        pair_whitelist = self._config.get("exchange", {}).get("pair_whitelist") or []
         wl_set = set(pair_whitelist)
         if wl_set:
             symbols = [s for s in symbols if s in wl_set]
