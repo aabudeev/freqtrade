@@ -69,6 +69,7 @@ class SignalQueueStore:
         occ = event.occurred_at.isoformat()
         with self._lock:
             with self._connect() as con:
+                try:
                     # Quick extraction of symbol for indexing/filtering
                     import re
                     symbol = None
@@ -76,7 +77,7 @@ class SignalQueueStore:
                     m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', event.text, re.I)
                     if m:
                         symbol = m.group(1).strip().upper()
-                    
+
                     con.execute(
                         """
                         INSERT INTO ingest_queue (
