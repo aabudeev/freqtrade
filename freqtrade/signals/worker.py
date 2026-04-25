@@ -4,7 +4,7 @@ import threading
 from typing import Optional, TYPE_CHECKING
 from freqtrade.signals.queue_store import SignalQueueStore
 from freqtrade.signals.parser import parse_signal_text, SignalType, SignalSide
-from freqtrade.enums import RPCMessageType
+from freqtrade.enums import RPCMessageType, State
 
 if TYPE_CHECKING:
     from freqtrade.freqtradebot import FreqtradeBot
@@ -29,6 +29,10 @@ class SignalWorker:
         Забирает 'pending' записи, парсит их и обновляет статусы.
         Возвращает количество обработанных записей.
         """
+        if self.bot and self.bot.state != State.RUNNING:
+            # Если бот не в RUNNING, не забираем новые сигналы
+            return 0
+            
         claimed = self.store.claim_pending(limit=10)
         if not claimed:
             return 0
@@ -120,9 +124,14 @@ class SignalWorker:
                         # В тестах или если bot не передан
                         self.store.mark_status(key, "parsed")
             except Exception as e:
-                logger.exception(f"Исключение при парсинге/выполнении сигнала {key}")
-                self.store.mark_status(key, "failed", str(e))
-                if getattr(self, 'bot', None) and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                err_msg = str(e)
+                if "trader is not running" in err_msg.lower():
+                    logger.warning(f"Бот не в RUNNING при обработке {key}. Возвращаем в pending.")
+                    self.store.mark_status(key, "pending")
+                else:
+                    logger.exception(f"Исключение при парсинге/выполнении сигнала {key}")
+                    self.store.mark_status(key, "failed", err_msg)
+                    if getattr(self, 'bot', None) and hasattr(self.bot, 'rpc') and self.bot.rpc:
                     self.bot.rpc.send_msg({
                         'type': RPCMessageType.EXCEPTION,
                         'status': f"🚨 Исключение при обработке сигнала:\n{str(e)}"

@@ -42,7 +42,18 @@ class SignalOnlyStrategy(IStrategy):
     }
     order_time_in_force = {"entry": "GTC", "exit": "GTC"}
 
+    plot_config = {
+        "main_plot": {
+            "ema20": {"color": "#e0752f"},
+            "ema50": {"color": "#2196f3"},
+        },
+        "sidebar_plot": {},
+    }
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        import talib.abstract as ta
+        dataframe['ema20'] = ta.EMA(dataframe, timeperiod=20)
+        dataframe['ema50'] = ta.EMA(dataframe, timeperiod=50)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -77,9 +88,9 @@ class SignalOnlyStrategy(IStrategy):
             tp_price = float(signal_tp)
             if not trade.is_short:
                 if current_rate >= tp_price:
-                    return "signal_tp_hit"
+                    return f"signal_tp_{tp_price}"
             else:
                 if current_rate <= tp_price:
-                    return "signal_tp_hit"
+                    return f"signal_tp_{tp_price}"
                     
         return None

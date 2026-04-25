@@ -301,28 +301,104 @@
         let pollInterval;
         let ftToken = '';
         let ftRefreshToken = '';
+        let _refreshTimer = null;
+
+        // Silent re-login using HTTP Basic (same creds FreqUI stores in localStorage)
+        async function silentLogin() {
+            // Try to get credentials from FreqUI's Pinia store
+            let username = '', password = '';
+            try {
+                // FreqUI stores in Pinia format
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const val = localStorage.getItem(key);
+                    if (!val) continue;
+                    try {
+                        const parsed = JSON.parse(val);
+                        // Pinia auth store
+                        if (parsed && parsed.openAPIPassword) {
+                            password = parsed.openAPIPassword;
+                            username = parsed.username || 'freqtrade';
+                        }
+                        // Older vuex format
+                        if (parsed && parsed.auth && parsed.auth.password) {
+                            password = parsed.auth.password;
+                            username = parsed.auth.username || 'freqtrade';
+                        }
+                    } catch (e) {}
+                }
+            } catch (e) {}
+
+            if (!username || !password) {
+                console.warn('silentLogin: no credentials found in localStorage');
+                return false;
+            }
+
+            try {
+                const res = await fetch('/api/v1/token/login', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Basic ' + btoa(username + ':' + password) }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    ftToken = data.access_token;
+                    ftRefreshToken = data.refresh_token || '';
+                    scheduleTokenRefresh();
+                    console.log('silentLogin: OK');
+                    return true;
+                }
+            } catch (e) {
+                console.error('silentLogin failed:', e);
+            }
+            return false;
+        }
+
+        // Proactive refresh every 13 min (token lives 15 min)
+        function scheduleTokenRefresh() {
+            if (_refreshTimer) clearInterval(_refreshTimer);
+            _refreshTimer = setInterval(async () => {
+                if (ftRefreshToken) {
+                    try {
+                        const res = await fetch('/api/v1/token/refresh', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            ftToken = data.access_token;
+                            console.log('Token proactively refreshed');
+                            return;
+                        }
+                    } catch (e) {}
+                }
+                // Refresh failed — fall back to full re-login
+                await silentLogin();
+            }, 13 * 60 * 1000); // 13 minutes
+        }
 
         // Wrapper: auto-refresh token on 401 and retry once
         async function apiFetch(url, options = {}) {
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
-            if (res.status === 401 && ftRefreshToken) {
-                const refreshRes = await fetch('/api/v1/token/refresh', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
-                });
-                if (refreshRes.ok) {
-                    const refreshData = await refreshRes.json();
-                    ftToken = refreshData.access_token;
-                    try {
-                        const vuex = JSON.parse(localStorage.getItem('vuex') || '{}');
-                        if (vuex.auth) { 
-                            // Update both possible keys FreqUI might use
-                            vuex.auth.token = ftToken; 
-                            vuex.auth.access_token = ftToken;
-                            localStorage.setItem('vuex', JSON.stringify(vuex)); 
-                        }
-                    } catch (e) {}
+            if (res.status === 401) {
+                // Try refresh token first
+                if (ftRefreshToken) {
+                    const refreshRes = await fetch('/api/v1/token/refresh', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
+                    });
+                    if (refreshRes.ok) {
+                        const refreshData = await refreshRes.json();
+                        ftToken = refreshData.access_token;
+                        scheduleTokenRefresh();
+                        options.headers['Authorization'] = `Bearer ${ftToken}`;
+                        res = await fetch(url, options);
+                        if (res.ok) return res;
+                    }
+                }
+                // Refresh failed or no refresh token — do full re-login
+                const loginOk = await silentLogin();
+                if (loginOk) {
                     options.headers['Authorization'] = `Bearer ${ftToken}`;
                     res = await fetch(url, options);
                 }
@@ -330,12 +406,8 @@
             return res;
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            let debugMsg = "No token found.\nKeys: ";
-            let keys = [];
-            for (let i=0; i<localStorage.length; i++) keys.push(localStorage.key(i));
-            debugMsg += keys.join(", ") + "\n";
-
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 1. Try to read existing token from FreqUI localStorage
             try {
                 const authStr = localStorage.getItem('auth');
                 if (authStr) {
@@ -347,41 +419,57 @@
 
             if (!ftToken) {
                 try {
-                    const vuexStr = localStorage.getItem('vuex');
-                    if (vuexStr) {
-                        const vuex = JSON.parse(vuexStr);
-                        if (vuex && vuex.auth) {
-                            ftToken = vuex.auth.token || vuex.auth.access_token || '';
-                            ftRefreshToken = vuex.auth.refresh_token || '';
-                        }
+                    // Pinia stores each module separately
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        const val = localStorage.getItem(key);
+                        if (!val) continue;
+                        try {
+                            const parsed = JSON.parse(val);
+                            if (parsed && parsed.accessToken) {
+                                ftToken = parsed.accessToken;
+                                ftRefreshToken = parsed.refreshToken || '';
+                                break;
+                            }
+                            // Vuex fallback
+                            if (parsed && parsed.auth) {
+                                ftToken = parsed.auth.token || parsed.auth.access_token || '';
+                                ftRefreshToken = parsed.auth.refresh_token || '';
+                                if (ftToken) break;
+                            }
+                        } catch (e) {}
                     }
                 } catch (e) {}
             }
 
-            if (!ftToken) ftToken = localStorage.getItem('jwt');
-            if (!ftToken) ftToken = localStorage.getItem('token');
-
+            // 2. Brute-force: find any JWT in localStorage
             if (!ftToken) {
-                for(let i=0; i<localStorage.length; i++) {
+                for (let i = 0; i < localStorage.length; i++) {
                     const val = localStorage.getItem(localStorage.key(i));
-                    if(val && typeof val === 'string' && val.startsWith('eyJ')) {
+                    if (val && typeof val === 'string' && val.startsWith('eyJ')) {
                         ftToken = val;
                         break;
                     }
-                    if(val && typeof val === 'string' && val.includes('"eyJ')) {
+                    if (val && typeof val === 'string' && val.includes('"eyJ')) {
                         const m = val.match(/"(eyJ[^"]+)"/);
                         if (m) { ftToken = m[1]; break; }
                     }
                 }
             }
 
+            // 3. No token at all — try silent login
+            if (!ftToken) {
+                await silentLogin();
+            }
+
             if (ftToken) {
                 document.getElementById('login-container').style.display = 'none';
                 document.getElementById('dashboard-container').style.display = 'block';
+                scheduleTokenRefresh();
                 fetchSignals();
                 pollInterval = setInterval(fetchSignals, 5000);
             } else {
-                document.getElementById('debug-info').innerText = debugMsg;
+                document.getElementById('debug-info').innerText = 'Не удалось авторизоваться. Откройте FreqUI и залогиньтесь.';
                 document.getElementById('login-container').style.display = 'block';
             }
         });
@@ -437,12 +525,7 @@
         async function fetchSignals() {
             try {
                 const res = await apiFetch('/api/v1/signals');
-                
-                if (res.status === 401) {
-                    document.getElementById('debug-info').innerText += "\nSession expired. Please re-login in FreqUI.";
-                    logout();
-                    return;
-                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 
                 const data = await res.json();
                 if (data.signals && Array.isArray(data.signals)) {
