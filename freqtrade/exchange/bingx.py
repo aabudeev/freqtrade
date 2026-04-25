@@ -141,41 +141,41 @@ class Bingx(Exchange):
         super().additional_exchange_init()
         print("!!! DEBUG_STDOUT: additional_exchange_init START")
         
-        # 1. Синхронный перехват (для старта бота)
+        # 1. Синхронный перехват
         orig_req_sync = self._api.request
-        def verbose_req_sync(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
-            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {api}/{path}")
+        def verbose_req_sync(path, *args, **kwargs):
+            method = args[1] if len(args) > 1 else "REQ"
+            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {path}")
             import time
             start = time.time()
             try:
-                res = orig_req_sync(path, api, method, params, headers, body, config, context)
-                print(f"!!! DEBUG_STDOUT_SYNC_RES: {api}/{path} OK ({int((time.time()-start)*1000)}ms)")
+                res = orig_req_sync(path, *args, **kwargs)
+                print(f"!!! DEBUG_STDOUT_SYNC_RES: {path} OK ({int((time.time()-start)*1000)}ms)")
                 return res
             except Exception as e:
-                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {api}/{path} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {path} FAILED: {e}")
                 raise e
         self._api.request = verbose_req_sync
 
-        # 2. Асинхронный перехват (для работы воркера)
+        # 2. Асинхронный перехват
         orig_req_async = self._api_async.request
-        async def verbose_req_async(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
-            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {api}/{path}")
+        async def verbose_req_async(path, *args, **kwargs):
+            method = args[1] if len(args) > 1 else "REQ"
+            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {path}")
             import time
             start = time.time()
             try:
-                res = await orig_req_async(path, api, method, params, headers, body, config, context)
-                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {api}/{path} OK ({int((time.time()-start)*1000)}ms)")
+                res = await orig_req_async(path, *args, **kwargs)
+                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {path} OK ({int((time.time()-start)*1000)}ms)")
                 return res
             except Exception as e:
-                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {api}/{path} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {path} FAILED: {e}")
                 raise e
         self._api_async.request = verbose_req_async
 
-        # Выключаем стандартный verbose
         self._api.verbose = False
         self._api_async.verbose = False
 
-        # На BingX включаем песочницу напрямую
         if self._config.get("exchange", {}).get("sandbox"):
             self._api.set_sandbox_mode(True)
             self._api_async.set_sandbox_mode(True)
@@ -185,14 +185,11 @@ class Bingx(Exchange):
 
     def get_balances(self, params: dict | None = None) -> CcxtBalances:
         balances = super().get_balances(params)
-        # В режиме песочницы BingX возвращает баланс в токене VST
-        # Freqtrade ожидает USDT. Алиасим VST в USDT.
         if self._config.get("exchange", {}).get("sandbox") and "VST" in balances:
             balances["USDT"] = balances.pop("VST")
         return balances
 
     def _bingx_refresh_hedge_flag(self, pair: str) -> None:
-        """Cache ``fetch_position_mode`` per pair (BingX swap API is mode-wide; avoid extra calls)."""
         if self.trading_mode != TradingMode.FUTURES:
             self._bingx_current_hedged = False
             return
@@ -234,10 +231,6 @@ class Bingx(Exchange):
         pair: str | None = None,
         accept_fail: bool = False,
     ) -> None:
-        """
-        BingX ``setLeverage`` requires ``params.side``: ``BOTH`` (one-way) or ``LONG``/``SHORT`` (hedge).
-        Base implementation omits this and fails on swap markets.
-        """
         if self._config["dry_run"] or not self.exchange_has("setLeverage"):
             return
         if self.trading_mode != TradingMode.FUTURES or not pair:
@@ -251,7 +244,6 @@ class Bingx(Exchange):
         lev = int(leverage)
 
         try:
-            # Принудительно выставляем ISOLATED (D.4)
             try:
                 self._api.set_margin_mode('ISOLATED', pair)
             except Exception:
@@ -279,12 +271,7 @@ class Bingx(Exchange):
             raise OperationalException(e) from e
 
     def fetch_l2_order_book(self, pair: str, limit: int = 100) -> dict:
-        """
-        BingX strictly requires limit to be one of [5, 10, 20, 50, 100, 500, 1000].
-        Freqtrade often passes 1 or other values which causes error 109400.
-        """
         valid_limits = [5, 10, 20, 50, 100, 500, 1000]
-        # Find the smallest valid limit that is >= requested limit
         bingx_limit = 5
         for v in valid_limits:
             if v >= limit:
@@ -296,20 +283,10 @@ class Bingx(Exchange):
         return super().fetch_l2_order_book(pair, bingx_limit)
 
     def load_leverage_tiers(self) -> dict[str, list[dict]]:
-        """
-        BingX only supports ``fetchMarketLeverageTiers`` (one call per symbol). The default
-        implementation fans out to every swap and runs ~100 requests in parallel, which trips
-        BingX error 109429 (``over 30 ... requests within 120000 ms``).
-
-        Mitigation: if ``exchange.pair_whitelist`` is set, load tiers **only** for those symbols;
-        otherwise throttle chunk size and sleep between chunks. Prefer a non-empty static whitelist.
-        """
         if self.trading_mode != TradingMode.FUTURES:
             return {}
         if not self.exchange_has("fetchMarketLeverageTiers"):
             return {}
-        # Do not call super().load_leverage_tiers(): base implementation fans out to every swap
-        # (100 parallel) and logs "Done initializing N markets" — unusable on BingX (109429).
 
         markets = self.markets
         symbols = sorted(
@@ -392,11 +369,6 @@ class Bingx(Exchange):
         return tiers
 
     def parse_leverage_tier(self, tier: dict) -> LeverageTier:
-        """
-        CCXT unified tiers for BingX swap set ``maxLeverage`` to ``None``; Freqtrade needs a
-        numeric cap per tier for ``get_max_leverage`` / notional limits. Approximate from
-        ``maintenanceMarginRate`` when missing (see CCXT ``parse_market_leverage_tiers``).
-        """
         info = tier.get("info") or {}
         max_lev = tier.get("maxLeverage")
         mmr = tier.get("maintenanceMarginRate")
