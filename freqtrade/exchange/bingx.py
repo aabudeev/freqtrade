@@ -138,25 +138,43 @@ class Bingx(Exchange):
 
     def additional_exchange_init(self) -> None:
         super().additional_exchange_init()
-        # Включаем супер-дебаг в STDOUT (мимо логгера)
-        self._api.verbose = True
-        self._api_async.verbose = True
+        print("!!! DEBUG_STDOUT: additional_exchange_init START")
         
-        # Monkey-patching request for raw stdout debugging
-        orig_req = self._api_async.request
-        async def verbose_req(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
-            url = self._api_async.url(path, api, method)
-            print(f"!!! DEBUG_STDOUT_REQ: {method} {url} | Params: {params}")
+        # 1. Синхронный перехват (для старта бота)
+        orig_req_sync = self._api.request
+        def verbose_req_sync(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
+            url = self._api.url(path, api, method)
+            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {url}")
             import time
             start = time.time()
             try:
-                res = await orig_req(path, api, method, params, headers, body, config, context)
-                print(f"!!! DEBUG_STDOUT_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
+                res = orig_req_sync(path, api, method, params, headers, body, config, context)
+                print(f"!!! DEBUG_STDOUT_SYNC_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
                 return res
             except Exception as e:
-                print(f"!!! DEBUG_STDOUT_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
                 raise e
-        self._api_async.request = verbose_req
+        self._api.request = verbose_req_sync
+
+        # 2. Асинхронный перехват (для работы воркера)
+        orig_req_async = self._api_async.request
+        async def verbose_req_async(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
+            url = self._api_async.url(path, api, method)
+            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {url}")
+            import time
+            start = time.time()
+            try:
+                res = await orig_req_async(path, api, method, params, headers, body, config, context)
+                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
+                return res
+            except Exception as e:
+                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                raise e
+        self._api_async.request = verbose_req_async
+
+        # Выключаем стандартный verbose
+        self._api.verbose = False
+        self._api_async.verbose = False
 
         # На BingX включаем песочницу напрямую
         if self._config.get("exchange", {}).get("sandbox"):
