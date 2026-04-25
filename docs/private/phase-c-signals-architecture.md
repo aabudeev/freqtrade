@@ -4,8 +4,8 @@
 
 ## Исходные данные
 
-- Экспорт истории канала (локально): `history_01_01_2025-18_04_2026.txt` (формат строк: дата, префикс канала, тело сигнала).
-- Числовой **ID канала** из настроек/экспортёра: **`1566432615`**. В **Telethon / MTProto** у супергрупп/каналов peer часто задаётся как **`-100<id>`** (например `-1001566432615`). Точное значение проверить при первом подключении через `get_dialogs()` или документацию клиента; в конфиг выносить **готовый int peer**, как сработало в рабочем приложении.
+- **Канал:** **`TELEGRAM_SIGNALS_CHANNEL_ID`** в `.env` / compose (числовой id без `-100`; в коде peer: **`-100<id>`**). Для снятия сырых сообщений — **`dump_channel_messages_json.py`** (см. раздел про replay ниже).
+- Старый построчный экспорт из клиента (`history_*.txt`) — только для ознакомления / legacy-парсера **`history_export`**, в Git не тащить.
 
 ## Почему сначала авторизация (QR), а не парсер
 
@@ -17,7 +17,9 @@
 
 ### Сессия Telegram: обновление и сбой
 
-- Первичный вход: скрипт **`scripts/signals/telegram_qr_login.py`** (зависимости: **`requirements-signals.txt`**).
+- **Автовход при старте бота (рекомендуется на сервере):** в `.env` задать **`ENABLE_TELEGRAM_SIGNAL_AUTH=1`**, **`TELEGRAM_TOKEN`** / **`TELEGRAM_CHAT_ID`** (тот же бот, что у Freqtrade), **`TELEGRAM_API_ID`** / **`TELEGRAM_API_HASH`**, при приёме сигналов — **`TELEGRAM_SIGNALS_CHANNEL_ID`**. Контейнер перед `freqtrade trade` в **`run_freqtrade_with_auth.sh`** последовательно запускает: **`preflight_telegram_auth.py`** (если сессии нет — QR в бот), затем **`preflight_channel_smoke.py`**: подключение MTProto, чтение до **`TELEGRAM_CHANNEL_SMOKE_LIMIT`** (по умолчанию 20) последних сообщений канала, проверка что хотя бы часть маппится в **`SignalIngestEvent`** (текст + `PeerChannel`). При ошибке контейнер **не** стартует `freqtrade trade`. Отключить проверку: **`SKIP_TELEGRAM_CHANNEL_SMOKE=1`**. Файл сессии в `user_data/.secrets/` на томе.
+- **MTProto и прокси:** Telethon **не** использует `HTTP_PROXY` сам по себе. В образе прокси задаётся тем же **`TG_PROXY`** (или **`TELEGRAM_MTPROXY`**, `HTTP_PROXY`): модуль **`freqtrade.signals.telethon_proxy`** собирает tuple для `TelegramClient(..., proxy=...)`. Без прокси при блокировке DC будет таймаут к `149.154.x.x`. Для применения `proxy=` Telethon требует пакет **`python-socks`** (см. **`requirements-signals.txt`**); только **`PySocks`** в Dockerfile недостаточно — иначе в логах предупреждение *proxy argument will be ignored*.
+- Ручной вход (отладка): **`scripts/signals/telegram_qr_login.py`**. Зависимости **`requirements-signals.txt`** ставятся **при сборке** образа (`Dockerfile.socks`).
 - Если сессия протухла или устройство отвязано — снова запустить скрипт (QR). Файлы **`*.session`** не бэкапить в открытый Git.
 - При **2FA** на аккаунте: переменная окружения **`TELEGRAM_2FA_PASSWORD`** (осторожно) или интерактивный ввод в скрипте.
 
@@ -28,7 +30,7 @@ flowchart LR
   subgraph ingest [Приём]
     TG[Telegram канал]
     L[Listener]
-    R[Replay из history.txt]
+    R[Replay JSON / фикстура]
   end
   subgraph core [Ядро]
     Q[(Очередь / БД)]
@@ -86,20 +88,21 @@ flowchart LR
 
 ## Listener / парсер — отдельный демон?
 
-**Рекомендация для MVP:**
+**Текущая реализация (C.1.1 + C.3.1):**
 
-- **Один процесс** (async): цикл Telethon `events.NewMessage` + запись в **SQLite/Redis** + лёгкий worker в том же процессе — проще деплой и отладка.
-- **Два сервиса** в Docker (listener + worker) — когда появятся ретраи, нагрузка и отдельное масштабирование.
+- В том же процессе, что **`freqtrade trade`**: фоновый поток **`TelegramSignalsListener`** (`freqtrade.signals.telegram_listener`) — Telethon **`NewMessage`** по каналу из **`TELEGRAM_SIGNALS_CHANNEL_ID`**, маппинг через **`message_dict_to_ingest_event`**, запись в **`user_data/signals_queue.sqlite`** (`ingest_queue`, статус `pending`). Включение по умолчанию при заданном channel id; **`ENABLE_TELEGRAM_SIGNALS_LISTENER=0`** — выключить.
+- **Worker (C.3.2)** — отдельно: забор `pending`, парсер **C.2**, исполнитель **C.4**.
 
-И то и другое — «демон» в смысле **долгоживущий процесс**, не cron.
+**Дальше при нагрузке:** второй сервис в Docker (listener + worker) — когда понадобятся ретраи и масштабирование.
 
 ## Тестирование без ожидания сигналов в канале
 
-- **Replay:** модуль читает строки из `history_01_01_2025-18_04_2026.txt` (или укороченной копии в `tests/fixtures/`) и публикует их **в ту же внутреннюю очередь**, что и live listener (тот же формат внутреннего события).
-- **Юнит-тесты парсера** на вырезках строк (LONG/SHORT, тейк, стоп).
+- **Replay (C.replay.1–2):** эталон — **сырой поток Telethon**, не Bot API: каждое сообщение как **`Message.to_dict()`** (после `json.dumps` поле `date` может быть ISO-строкой). Модуль **`freqtrade.signals.telethon_message`**: `message_dict_to_ingest_event`, `iter_ingest_events_from_telethon_json` → тот же **`SignalIngestEvent`**, что ожидает listener (`source='telegram'`, ключ **`telegram:{channel_id}:{message_id}`**).
+- **Дамп с живого канала (разово / обновить фикстуру):** при активной сессии и **`TELEGRAM_SIGNALS_CHANNEL_ID`** в `.env` — **`python scripts/signals/dump_channel_messages_json.py --limit 20 --out /tmp/ch.json`**. Просмотр событий: **`python scripts/signals/replay_telegram_json_dump.py tests/fixtures/signals_channel_messages.json --limit 10`**.
+- **CI:** в репо — **`tests/fixtures/signals_channel_messages.json`** (короткая выборка из дампа; периодически обновлять дампером). Полные выгрузки **`history_*.txt`** / большие JSON **не коммитить** (см. `.gitignore`).
+- **Legacy (опционально):** старый построчный экспорт `DD-MM-YYYY | …` — **`freqtrade.signals.history_export`** и **`replay_history_dump.py`**; для нового кода не опираться.
+- **Юнит-тесты:** `pytest tests/signals/test_telethon_message.py`; парсер сигналов (LONG/SHORT, тейк, стоп) — отдельно по мере **C.2**.
 - **Интеграционный тест** «replay → parse → mock executor» без сети биржи.
-
-Полный файл истории **не обязательно** коммитить (объём); в репозитории — **короткая анонимизированная выборка** для CI.
 
 ## «Игровой» баланс ~200k и FreqUI
 
