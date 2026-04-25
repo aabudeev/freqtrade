@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from math import floor
+from typing import Any, Dict
 
 import ccxt
 
@@ -143,32 +144,30 @@ class Bingx(Exchange):
         # 1. Синхронный перехват (для старта бота)
         orig_req_sync = self._api.request
         def verbose_req_sync(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
-            url = self._api.url(path, api, method)
-            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {url}")
+            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {api}/{path}")
             import time
             start = time.time()
             try:
                 res = orig_req_sync(path, api, method, params, headers, body, config, context)
-                print(f"!!! DEBUG_STDOUT_SYNC_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
+                print(f"!!! DEBUG_STDOUT_SYNC_RES: {api}/{path} OK ({int((time.time()-start)*1000)}ms)")
                 return res
             except Exception as e:
-                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {api}/{path} FAILED after {int((time.time()-start)*1000)}ms: {e}")
                 raise e
         self._api.request = verbose_req_sync
 
         # 2. Асинхронный перехват (для работы воркера)
         orig_req_async = self._api_async.request
         async def verbose_req_async(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
-            url = self._api_async.url(path, api, method)
-            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {url}")
+            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {api}/{path}")
             import time
             start = time.time()
             try:
                 res = await orig_req_async(path, api, method, params, headers, body, config, context)
-                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
+                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {api}/{path} OK ({int((time.time()-start)*1000)}ms)")
                 return res
             except Exception as e:
-                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {api}/{path} FAILED after {int((time.time()-start)*1000)}ms: {e}")
                 raise e
         self._api_async.request = verbose_req_async
 
@@ -322,7 +321,7 @@ class Bingx(Exchange):
             )
         )
         total_swaps = len(symbols)
-        pair_whitelist = self._config.get("exchange", {}).get("pair_whitelist") or []
+        pair_whitelist = self._config.get("exchange", {}).get("sandbox") or self._config.get("exchange", {}).get("pair_whitelist") or []
         wl_set = set(pair_whitelist)
         if wl_set:
             symbols = [s for s in symbols if s in wl_set]
