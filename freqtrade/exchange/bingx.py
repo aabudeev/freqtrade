@@ -138,6 +138,8 @@ class Bingx(Exchange):
         )
 
     def additional_exchange_init(self) -> None:
+        self._api.verbose = False
+        self._api_async.verbose = False
         super().additional_exchange_init()
         print("!!! DEBUG_STDOUT: additional_exchange_init START")
         

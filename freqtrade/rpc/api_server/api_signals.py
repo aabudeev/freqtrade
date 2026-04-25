@@ -25,13 +25,13 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
             conn.row_factory = dict_factory
             cursor = conn.cursor()
             
-            # Получаем общее количество для пагинатора
-            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue")
+            # Получаем общее количество только для РЕАЛЬНЫХ сигналов
+            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue WHERE raw_payload IS NOT NULL")
             total = cursor.fetchone()["total"]
             
-            # Получаем срез данных
+            # Получаем только те записи, которые являются сигналами
             cursor.execute(
-                "SELECT * FROM ingest_queue ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
+                "SELECT * FROM ingest_queue WHERE raw_payload IS NOT NULL ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
                 (limit, offset)
             )
             rows = cursor.fetchall()

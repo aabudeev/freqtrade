@@ -123,7 +123,7 @@ class SignalWorker:
                                 order_type="market",
                                 order_side=order_side,
                                 stake_amount=stake_amount,
-                                enter_tag=f"telegram_{key[:8]}",
+                                enter_tag=f"telegram_{key}",
                                 leverage=leverage
                             )
                             
@@ -188,9 +188,10 @@ class SignalWorker:
                 return
 
             for key in active_signals:
-                tag = f"telegram_{key}"
-                # Ищем сделку во Freqtrade
-                trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+                tag_full = f"telegram_{key}"
+                tag_short = f"telegram_{key[:8]}"
+                # Ищем сделку во Freqtrade по любому из тегов
+                trade = Trade.get_trades([Trade.enter_tag.in_([tag_full, tag_short])]).first()
                 
                 if trade:
                     if not trade.is_open:
@@ -202,6 +203,12 @@ class SignalWorker:
                             
                         logger.info(f"Сделка по сигналу {key} закрыта ({trade.exit_reason}). Статус: {new_status}")
                         self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
+                    else:
+                        # Если сделка открыта, проверяем, не стал ли ордер 'open' (исполненным)
+                        # Во Freqtrade если сделка есть в Trade.get_trades, значит вход уже произошел.
+                        # Но статус в Dashboard 'ordered' ставится фронтендом или при создании.
+                        # Если мы здесь, значит сделка существует -> статус 'sent' (исполняется)
+                        pass
 
         except Exception as e:
             logger.error(f"Ошибка при синхронизации статусов сделок: {e}")
@@ -228,7 +235,7 @@ class SignalWorker:
                 # 2. Публичный API (без подписи)
                 start = time.time()
                 try:
-                    self.bot.exchange.fetch_time()
+                    self.bot.exchange.api.fetch_time()
                     results.append(f"BingX Public API (fetch_time): OK ({int((time.time()-start)*1000)}ms)")
                 except Exception as e:
                     results.append(f"BingX Public API FAILED: {e}")
