@@ -121,6 +121,20 @@ class TelegramSignalsListener:
         assert self._client is not None
         self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
         logger.info("Telegram signals listener connected (peer %s)", peer)
+
+        # Подхватываем историю (последние 50 сообщений) на случай, если бот был офлайн
+        logger.info("Подгружаем историю сигналов (последние 50 сообщений)...")
+        async for msg in self._client.iter_messages(entity, limit=50):
+            try:
+                if not msg:
+                    continue
+                d = msg.to_dict()
+                ev = message_dict_to_ingest_event(d)
+                if ev and self._store.enqueue(ev):
+                    logger.info("Signals queue (history): enqueued %s", ev.idempotency_key)
+            except Exception:
+                logger.exception("Ошибка при импорте сообщения из истории")
+
         await self._client.run_until_disconnected()
 
     def shutdown(self) -> None:

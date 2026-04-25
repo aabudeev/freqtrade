@@ -214,6 +214,12 @@ class Bingx(Exchange):
         lev = int(leverage)
 
         try:
+            # Принудительно выставляем ISOLATED (D.4)
+            try:
+                self._api.set_margin_mode('ISOLATED', pair)
+            except Exception:
+                pass
+
             if getattr(self, "_bingx_current_hedged", False):
                 for pos_side in ("LONG", "SHORT"):
                     res = self._api.set_leverage(lev, pair, {"side": pos_side})

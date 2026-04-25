@@ -47,13 +47,18 @@ class SignalOnlyStrategy(IStrategy):
             "ema20": {"color": "#e0752f"},
             "ema50": {"color": "#2196f3"},
         },
-        "sidebar_plot": {},
+        "subplots": {
+            "RSI": {
+                "rsi": {"color": "#9c27b0"},
+            }
+        },
     }
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         import talib.abstract as ta
         dataframe['ema20'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['ema50'] = ta.EMA(dataframe, timeperiod=50)
+        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:

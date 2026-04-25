@@ -1,6 +1,7 @@
 import logging
 import time
 import threading
+from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 from freqtrade.signals.queue_store import SignalQueueStore
 from freqtrade.signals.parser import parse_signal_text, SignalType, SignalSide
@@ -53,6 +54,17 @@ class SignalWorker:
                             'status': f"⚠️ Ошибка парсинга сигнала:\n{text[:100]}..."
                         })
                 else:
+                    # Проверка TTL (4 часа)
+                    occ_dt = datetime.fromisoformat(row['occurred_at'])
+                    # occurred_at в базе хранится как naive UTC
+                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                    age_seconds = (now_utc - occ_dt).total_seconds()
+                    
+                    if age_seconds > 4 * 3600:
+                        logger.warning(f"Сигнал {key} слишком старый ({age_seconds/3600:.1f}ч). Пропускаем.")
+                        self.store.mark_status(key, "skipped", f"TTL expired: age {age_seconds/3600:.1f}h")
+                        continue
+
                     logger.info(f"Сигнал {key} успешно распарсен: {event}")
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
@@ -63,6 +75,14 @@ class SignalWorker:
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         # Исполнение через RPC
                         if event.type == SignalType.ENTRY:
+                            from freqtrade.persistence import Trade
+                            # Проверка: если уже есть открытая сделка по этой паре, не входим дублем (D.3)
+                            existing = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
+                            if existing:
+                                logger.info(f"Сделка по {event.symbol} уже открыта. Пропускаем сигнал {key}.")
+                                self.store.mark_status(key, "skipped", "Already in trade for this pair")
+                                continue
+                            
                             from freqtrade.enums import SignalDirection
                             
                             # Входим по рынку одним ордером (Market)
@@ -87,6 +107,12 @@ class SignalWorker:
                             leverage = event.leverage
                             if not leverage:
                                 leverage = float(settings.get('default_leverage', 50.0))
+
+                            # Принудительно выставляем ISOLATED (D.4)
+                            try:
+                                self.bot.exchange.set_margin_mode('ISOLATED', event.symbol)
+                            except Exception:
+                                pass
 
                             trade = self.bot.rpc._rpc._rpc_force_entry(
                                 pair=event.symbol,
@@ -118,8 +144,8 @@ class SignalWorker:
                                 logger.info(f"Закрыт Trade {trade.id} по сигналу {key}")
                                 self.store.mark_status(key, "sent")
                             else:
-                                logger.warning(f"Сделка для выхода {event.symbol} не найдена")
-                                self.store.mark_status(key, "failed", "Open trade not found for exit")
+                                logger.info(f"Сделка для выхода {event.symbol} не найдена. Пропускаем.")
+                                self.store.mark_status(key, "skipped", "Open trade not found for exit")
                     else:
                         # В тестах или если bot не передан
                         self.store.mark_status(key, "parsed")
@@ -133,8 +159,8 @@ class SignalWorker:
                     self.store.mark_status(key, "failed", err_msg)
                     if getattr(self, 'bot', None) and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
-                            'type': RPCMessageType.EXCEPTION,
-                            'status': f"🚨 Исключение при обработке сигнала:\n{str(e)}"
+                            'type': RPCMessageType.STATUS,
+                            'status': f"❌ Ошибка исполнения сигнала {key}:\n`{err_msg}`"
                         })
                 
         return len(claimed)
