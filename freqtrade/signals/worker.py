@@ -168,15 +168,59 @@ class SignalWorker:
                 
         return len(claimed)
 
+    def _sync_trade_statuses(self):
+        """
+        Периодически проверяет статусы сделок во Freqtrade и обновляет ingest_queue.
+        """
+        try:
+            from freqtrade.persistence import Trade
+            
+            # Находим все сигналы, которые сейчас в процессе (sent)
+            conn = self.store._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT key FROM ingest_queue WHERE status = 'sent'")
+                active_signals = [row[0] for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
+            if not active_signals:
+                return
+
+            for key in active_signals:
+                tag = f"telegram_{key}"
+                # Ищем сделку во Freqtrade
+                trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+                
+                if trade:
+                    if not trade.is_open:
+                        new_status = "closed_tp"
+                        # Если профит отрицательный или есть SL в причине выхода
+                        if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
+                           (trade.close_profit_pct and trade.close_profit_pct < 0):
+                            new_status = "closed_sl"
+                            
+                        logger.info(f"Сделка по сигналу {key} закрыта ({trade.exit_reason}). Статус: {new_status}")
+                        self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
+
+        except Exception as e:
+            logger.error(f"Ошибка при синхронизации статусов сделок: {e}")
+
     def _run_loop(self):
         logger.info("SignalWorker запущен")
+        import time
+        last_sync = 0
         while not self._stop_event.is_set():
             try:
                 self.process_once()
+                
+                now = time.time()
+                if now - last_sync > 30:
+                    self._sync_trade_statuses()
+                    last_sync = now
             except Exception:
                 logger.exception("SignalWorker столкнулся с ошибкой в основном цикле")
             
-            # Ждем порциями, чтобы быстрее реагировать на stop_event
             self._stop_event.wait(self.sleep_interval)
         logger.info("SignalWorker остановлен")
 
