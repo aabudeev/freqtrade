@@ -179,7 +179,7 @@ class SignalWorker:
             conn = self.store._connect()
             try:
                 cursor = conn.cursor()
-                cursor.execute("SELECT key FROM ingest_queue WHERE status = 'sent'")
+                cursor.execute("SELECT msg_key FROM ingest_queue WHERE status = 'sent'")
                 active_signals = [row[0] for row in cursor.fetchall()]
             finally:
                 conn.close()
