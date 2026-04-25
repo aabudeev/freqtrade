@@ -12,22 +12,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/signals", tags=["Signals"])
-def get_signals(limit: int = 100, config: dict = Depends(get_config)) -> Dict[str, Any]:
+def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_config)) -> Dict[str, Any]:
     """
-    Возвращает последние сигналы из базы данных.
+    Возвращает сигналы из базы данных с поддержкой пагинации.
     """
     try:
         db_path = config["user_data_dir"] / "signals_queue.sqlite"
         store = SignalQueueStore(db_path)
         
-        # Получаем последние 100 сигналов (самые свежие первыми)
         conn = store._connect()
         try:
             conn.row_factory = dict_factory
             cursor = conn.cursor()
+            
+            # Получаем общее количество для пагинатора
+            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue")
+            total = cursor.fetchone()["total"]
+            
+            # Получаем срез данных
             cursor.execute(
-                "SELECT * FROM ingest_queue ORDER BY occurred_at DESC LIMIT ?", 
-                (limit,)
+                "SELECT * FROM ingest_queue ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
+                (limit, offset)
             )
             rows = cursor.fetchall()
         finally:
@@ -35,13 +40,16 @@ def get_signals(limit: int = 100, config: dict = Depends(get_config)) -> Dict[st
             
         return {
             "signals": rows,
-            "total_count": len(rows)
+            "total_count": total,
+            "limit": limit,
+            "offset": offset
         }
     except Exception as e:
         logger.exception("Error fetching signals")
         return {
             "error": str(e),
-            "signals": []
+            "signals": [],
+            "total_count": 0
         }
 
 def dict_factory(cursor, row):
@@ -66,8 +74,8 @@ async def update_signals_settings(request: dict, config: dict = Depends(get_conf
         db_path = config["user_data_dir"] / "signals_queue.sqlite"
         store = SignalQueueStore(db_path)
         
-        # Filter only allowed keys
-        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage']
+        # Filter only allowed keys (D.5, D.6)
+        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage', 'entry_mode']
         filtered = {k: v for k, v in request.items() if k in allowed_keys}
         
         if filtered:

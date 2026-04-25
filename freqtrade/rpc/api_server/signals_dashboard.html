@@ -207,6 +207,54 @@
         }
         .tf-btn:hover { border-color: var(--accent); color: #fff; }
         .tf-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+        /* Pagination styles */
+        .pagination-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-right: 1rem;
+        }
+        .pagination-pages {
+            display: flex;
+            gap: 5px;
+        }
+        .page-btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            min-width: 32px;
+            height: 32px;
+            padding: 0 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .page-btn:hover:not(.disabled) {
+            border-color: var(--accent);
+            color: #fff;
+        }
+        .page-btn.active {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+        .page-btn.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        select.page-limit {
+            background: rgba(0,0,0,0.5);
+            border: 1px solid var(--border-color);
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
     </style>
 </head>
 <body>
@@ -223,6 +271,17 @@
         <header>
             <h1>Сигналы (Telegram)</h1>
             <div class="controls">
+                <div class="pagination-container">
+                    <select class="page-limit" id="page-limit" onchange="changeLimit()">
+                        <option value="10">10 на стр.</option>
+                        <option value="20">20 на стр.</option>
+                        <option value="50">50 на стр.</option>
+                        <option value="100">100 на стр.</option>
+                    </select>
+                    <div class="pagination-pages" id="pagination-pages">
+                        <!-- Pages here -->
+                    </div>
+                </div>
                 <span id="last-update">Обновление: --</span>
                 <button onclick="openSettings()">Настройки</button>
             </div>
@@ -309,6 +368,11 @@
         let ftToken = '';
         let ftRefreshToken = '';
         let _refreshTimer = null;
+        
+        // Pagination state
+        let currentPage = 1;
+        let currentLimit = 10;
+        let totalRecords = 0;
 
         // Silent re-login using HTTP Basic (same creds FreqUI stores in localStorage)
         async function silentLogin() {
@@ -533,14 +597,15 @@
 
         async function fetchSignals() {
             try {
-                const res = await apiFetch('/api/v1/signals');
+                const offset = (currentPage - 1) * currentLimit;
+                const res = await apiFetch(`/api/v1/signals?limit=${currentLimit}&offset=${offset}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 
                 const data = await res.json();
                 if (data.signals && Array.isArray(data.signals)) {
+                    totalRecords = data.total_count || 0;
                     renderTable(data.signals);
-                } else {
-                    renderTable(data);
+                    renderPagination();
                 }
                 
                 const now = new Date();
@@ -548,6 +613,47 @@
             } catch (err) {
                 console.error('Fetch error:', err);
             }
+        }
+
+        function changeLimit() {
+            currentLimit = parseInt(document.getElementById('page-limit').value);
+            currentPage = 1;
+            fetchSignals();
+        }
+
+        function goToPage(p) {
+            currentPage = p;
+            fetchSignals();
+        }
+
+        function renderPagination() {
+            const container = document.getElementById('pagination-pages');
+            const totalPages = Math.ceil(totalRecords / currentLimit);
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let html = '';
+            
+            // Logic for 1 2 3 ... 27
+            const delta = 2;
+            const range = [];
+            for (let i = Math.max(2, currentPage - delta); i <= Math.min(totalPages - 1, currentPage + delta); i++) {
+                range.push(i);
+            }
+
+            if (currentPage > delta + 2) html += `<div class="page-btn" onclick="goToPage(1)">1</div><div class="page-btn disabled">...</div>`;
+            else if (totalPages > 1) html += `<div class="page-btn ${currentPage === 1 ? 'active' : ''}" onclick="goToPage(1)">1</div>`;
+
+            range.forEach(i => {
+                html += `<div class="page-btn ${currentPage === i ? 'active' : ''}" onclick="goToPage(${i})">${i}</div>`;
+            });
+
+            if (currentPage < totalPages - delta - 1) html += `<div class="page-btn disabled">...</div><div class="page-btn" onclick="goToPage(${totalPages})">${totalPages}</div>`;
+            else if (totalPages > 1 && !range.includes(totalPages)) html += `<div class="page-btn ${currentPage === totalPages ? 'active' : ''}" onclick="goToPage(${totalPages})">${totalPages}</div>`;
+
+            container.innerHTML = html;
         }
 
         function parseSignalText(text) {
