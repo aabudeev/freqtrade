@@ -132,10 +132,10 @@ class SignalWorker:
                     logger.exception(f"Исключение при парсинге/выполнении сигнала {key}")
                     self.store.mark_status(key, "failed", err_msg)
                     if getattr(self, 'bot', None) and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                    self.bot.rpc.send_msg({
-                        'type': RPCMessageType.EXCEPTION,
-                        'status': f"🚨 Исключение при обработке сигнала:\n{str(e)}"
-                    })
+                        self.bot.rpc.send_msg({
+                            'type': RPCMessageType.EXCEPTION,
+                            'status': f"🚨 Исключение при обработке сигнала:\n{str(e)}"
+                        })
                 
         return len(claimed)
 
