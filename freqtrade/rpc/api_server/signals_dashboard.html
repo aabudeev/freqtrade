@@ -337,6 +337,13 @@
                     <option value="dca">Доборы (DCA)</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label>Тип счета</label>
+                <select id="set_exchange_mode">
+                    <option value="vst">Игровой (VST Demo)</option>
+                    <option value="live">Реальный (Real Money)</option>
+                </select>
+            </div>
             <button class="btn-primary" onclick="saveSettings()">Сохранить</button>
             <button onclick="closeSettings()" style="width: 100%; margin-top: 0.5rem; background: transparent; border: 1px solid var(--border-color); color: #fff;">Отмена</button>
         </div>
@@ -567,6 +574,7 @@
                     document.getElementById('set_stake_percentage').value = data.stake_percentage || 3;
                     document.getElementById('set_default_leverage').value = data.default_leverage || 50;
                     document.getElementById('set_entry_mode').value = data.entry_mode || 'single';
+                    document.getElementById('set_exchange_mode').value = data.exchange_mode || 'vst';
                     toggleStakeMode();
                 }
             } catch (e) { console.error(e); }
@@ -583,7 +591,8 @@
                 stake_fixed_amount: parseFloat(document.getElementById('set_stake_fixed_amount').value),
                 stake_percentage: parseFloat(document.getElementById('set_stake_percentage').value),
                 default_leverage: parseInt(document.getElementById('set_default_leverage').value),
-                entry_mode: document.getElementById('set_entry_mode').value
+                entry_mode: document.getElementById('set_entry_mode').value,
+                exchange_mode: document.getElementById('set_exchange_mode').value
             };
             try {
                 await apiFetch('/api/v1/signals_settings', {

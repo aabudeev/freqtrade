@@ -27,9 +27,20 @@ class SignalWorker:
 
     def process_once(self) -> int:
         """
-        Забирает 'pending' записи, парсит их и обновляет статусы.
-        Возвращает количество обработанных записей.
         """
+        # Сначала применяем настройки аккаунта (Real/Demo)
+        settings = self.store.get_settings()
+        target_mode = settings.get('exchange_mode', 'vst')
+        is_sandbox = (target_mode == 'vst')
+        
+        if self.bot and self.bot.exchange:
+            # Принудительно меняем режим в CCXT (синхронном и асинхронном)
+            # В CCXT свойство называется 'sandbox'
+            if self.bot.exchange._api.sandbox != is_sandbox:
+                self.bot.exchange._api.set_sandbox_mode(is_sandbox)
+                self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
+                logger.info(f"Переключен режим биржи: {'SANDBOX (VST)' if is_sandbox else 'LIVE'}")
+
         if self.bot and self.bot.state != State.RUNNING:
             # Если бот не в RUNNING, не забираем новые сигналы
             return 0
@@ -198,16 +209,12 @@ class SignalWorker:
                         new_status = "closed_tp"
                         # Если профит отрицательный или есть SL в причине выхода
                         if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
-                           (trade.close_profit_pct and trade.close_profit_pct < 0):
+                           (trade.close_profit and trade.close_profit < 0):
                             new_status = "closed_sl"
                             
                         logger.info(f"Сделка по сигналу {key} закрыта ({trade.exit_reason}). Статус: {new_status}")
                         self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
                     else:
-                        # Если сделка открыта, проверяем, не стал ли ордер 'open' (исполненным)
-                        # Во Freqtrade если сделка есть в Trade.get_trades, значит вход уже произошел.
-                        # Но статус в Dashboard 'ordered' ставится фронтендом или при создании.
-                        # Если мы здесь, значит сделка существует -> статус 'sent' (исполняется)
                         pass
 
         except Exception as e:
@@ -235,7 +242,8 @@ class SignalWorker:
                 # 2. Публичный API (без подписи)
                 start = time.time()
                 try:
-                    self.bot.exchange.api.fetch_time()
+                    # Используем _api (внутренний CCXT объект во Freqtrade)
+                    self.bot.exchange._api.fetch_time()
                     results.append(f"BingX Public API (fetch_time): OK ({int((time.time()-start)*1000)}ms)")
                 except Exception as e:
                     results.append(f"BingX Public API FAILED: {e}")
