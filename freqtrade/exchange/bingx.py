@@ -151,7 +151,9 @@ class Bingx(Exchange):
 
     def get_balances(self, params: dict | None = None) -> CcxtBalances:
         balances = super().get_balances(params)
-        if self._config.get("exchange", {}).get("sandbox") and "VST" in balances:
+        # Проверяем реальное состояние sandbox в API, а не в статичном конфиге
+        is_vst = getattr(self._api, 'sandbox', False)
+        if is_vst and "VST" in balances:
             balances["USDT"] = balances.pop("VST")
         return balances
 
