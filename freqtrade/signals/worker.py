@@ -206,18 +206,65 @@ class SignalWorker:
         except Exception as e:
             logger.error(f"Ошибка при синхронизации статусов сделок: {e}")
 
+    def _run_diagnostic(self):
+        """
+        Супер-подробная диагностика сети. Пишет в лог тайминги.
+        """
+        import time
+        import socket
+        try:
+            results = ["--- NETWORK DIAGNOSTIC ---"]
+            
+            # 1. Проверка прокси-порта
+            start = time.time()
+            try:
+                s = socket.create_connection(("amneziawg2", 1080), timeout=5)
+                s.close()
+                results.append(f"Proxy connection (amneziawg2:1080): OK ({int((time.time()-start)*1000)}ms)")
+            except Exception as e:
+                results.append(f"Proxy connection FAILED: {e}")
+
+            if getattr(self, 'bot', None) and self.bot.exchange:
+                # 2. Публичный API (без подписи)
+                start = time.time()
+                try:
+                    self.bot.exchange.fetch_time()
+                    results.append(f"BingX Public API (fetch_time): OK ({int((time.time()-start)*1000)}ms)")
+                except Exception as e:
+                    results.append(f"BingX Public API FAILED: {e}")
+
+                # 3. Приватный API (с ключами)
+                start = time.time()
+                try:
+                    self.bot.exchange.get_balances()
+                    results.append(f"BingX Private API (get_balances): OK ({int((time.time()-start)*1000)}ms)")
+                except Exception as e:
+                    results.append(f"BingX Private API FAILED: {e}")
+            
+            logger.info("\n".join(results))
+        except Exception as e:
+            logger.error(f"Diagnostic error: {e}")
+
     def _run_loop(self):
         logger.info("SignalWorker запущен")
         import time
         last_sync = 0
+        last_diag = 0
         while not self._stop_event.is_set():
             try:
                 self.process_once()
                 
                 now = time.time()
+                # Синхронизация статусов раз в 30 секунд
                 if now - last_sync > 30:
                     self._sync_trade_statuses()
                     last_sync = now
+                
+                # Диагностика раз в 2 минуты (или чаще если надо)
+                if now - last_diag > 120:
+                    self._run_diagnostic()
+                    last_diag = now
+
             except Exception:
                 logger.exception("SignalWorker столкнулся с ошибкой в основном цикле")
             
