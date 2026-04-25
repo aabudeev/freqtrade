@@ -75,34 +75,30 @@ async def index_html(rest_of_path: str):
     <script>
     (function() {
         function addSignalsLink() {
-            const nav = document.querySelector('.v-navigation-drawer__content .v-list') || 
-                        document.querySelector('.v-tabs-bar__content') ||
-                        document.querySelector('header .v-toolbar__content');
-            
-            if (nav && !document.getElementById('nav-signals')) {
-                const link = document.createElement('a');
-                link.id = 'nav-signals';
-                link.href = '/signals_dashboard';
-                link.target = '_blank';
-                link.className = 'v-tab v-btn v-btn--flat v-btn--text v-size--default';
-                link.style.textDecoration = 'none';
-                link.style.color = 'inherit';
-                link.innerHTML = '<span class="v-btn__content">Signals</span>';
-                
-                // Ищем куда вставить (рядом с Dashboard или Chart)
-                const items = nav.querySelectorAll('.v-tab, .v-list-item');
-                let inserted = false;
-                for (let item of items) {
-                    if (item.textContent.includes('Dashboard') || item.textContent.includes('Chart')) {
-                        item.parentNode.insertBefore(link, item.nextSibling);
-                        inserted = true;
-                        break;
-                    }
+            if (document.getElementById('nav-signals')) return;
+
+            // Ищем все элементы, которые могут быть кнопками меню
+            const items = document.querySelectorAll('.v-tab, .v-list-item, .v-btn, a');
+            for (let item of items) {
+                if (item.textContent.trim() === 'Dashboard' || item.textContent.trim() === 'Панель') {
+                    const link = document.createElement('a');
+                    link.id = 'nav-signals';
+                    link.href = '/signals_dashboard';
+                    link.target = '_blank';
+                    // Копируем классы у соседа, чтобы выглядело нативно
+                    link.className = item.className;
+                    link.style.textDecoration = 'none';
+                    link.style.color = 'inherit';
+                    link.style.marginLeft = '10px';
+                    link.innerHTML = '<span class="v-btn__content">Signals</span>';
+                    
+                    item.parentNode.insertBefore(link, item.nextSibling);
+                    console.log('Signals link injected!');
+                    break;
                 }
-                if (!inserted) nav.appendChild(link);
             }
         }
-        setInterval(addSignalsLink, 2000);
+        setInterval(addSignalsLink, 1000);
     })();
     </script>
     """

@@ -54,8 +54,18 @@ class SignalQueueStore:
             try:
                 con.execute("ALTER TABLE ingest_queue ADD COLUMN symbol TEXT")
             except sqlite3.OperationalError:
-                # Уже есть
                 pass
+                
+            # Лечим старые записи: если symbol пуст, пробуем вытащить из текста
+            rows = con.execute("SELECT idempotency_key, text FROM ingest_queue WHERE symbol IS NULL").fetchall()
+            if rows:
+                import re
+                for row in rows:
+                    key, text = row
+                    m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', text, re.I)
+                    if m:
+                        sym = m.group(1).strip().upper()
+                        con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (sym, key))
             con.commit()
 
     def _connect(self) -> sqlite3.Connection:
