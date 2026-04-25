@@ -44,6 +44,9 @@ class SignalWorker:
                 # Принудительно устанавливаем флаг, чтобы CCXT знал текущее состояние
                 self.bot.exchange._api.sandbox = is_sandbox
                 self.bot.exchange._api_async.sandbox = is_sandbox
+                # Сбрасываем кэш рынков, чтобы бот перечитал их для нового режима
+                self.bot.exchange._markets = {}
+                self.bot.exchange._reload_markets = True
                 logger.info(f"Переключен режим биржи: {'SANDBOX (VST)' if is_sandbox else 'LIVE'}")
 
         if self.bot and self.bot.state != State.RUNNING:

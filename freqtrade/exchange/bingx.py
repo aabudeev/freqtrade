@@ -151,8 +151,16 @@ class Bingx(Exchange):
 
     def get_balances(self, params: dict | None = None) -> CcxtBalances:
         balances = super().get_balances(params)
-        # Проверяем реальное состояние sandbox в API, а не в статичном конфиге
         is_vst = getattr(self._api, 'sandbox', False)
+        
+        # ОТЛАДКА: выводим в консоль что реально пришло
+        keys = list(balances.keys())[:10] # первые 10 ключей
+        logger.info(f"BALANCES DEBUG (is_vst={is_vst}): keys found: {keys}")
+        if "USDT" in balances:
+            logger.info(f"USDT Balance: {balances['USDT']['total']}")
+        if "VST" in balances:
+            logger.info(f"VST Balance: {balances['VST']['total']}")
+
         if is_vst and "VST" in balances:
             balances["USDT"] = balances.pop("VST")
         return balances
