@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS ingest_queue (
   text TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
   raw_payload TEXT,
+  symbol TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -49,6 +50,12 @@ class SignalQueueStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(SCHEMA)
+            # Миграция: добавляем колонку symbol если её нет
+            try:
+                con.execute("ALTER TABLE ingest_queue ADD COLUMN symbol TEXT")
+            except sqlite3.OperationalError:
+                # Уже есть
+                pass
             con.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -62,13 +69,20 @@ class SignalQueueStore:
         occ = event.occurred_at.isoformat()
         with self._lock:
             with self._connect() as con:
-                try:
+                    # Quick extraction of symbol for indexing/filtering
+                    import re
+                    symbol = None
+                    # Ищем что-то похожее на BTC/USDT или просто BTC в контексте "Монета:"
+                    m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', event.text, re.I)
+                    if m:
+                        symbol = m.group(1).strip().upper()
+                    
                     con.execute(
                         """
                         INSERT INTO ingest_queue (
                           idempotency_key, source, text, occurred_at, raw_payload,
-                          status, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                          symbol, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                         """,
                         (
                             event.idempotency_key,
@@ -76,6 +90,7 @@ class SignalQueueStore:
                             event.text,
                             occ,
                             event.raw_line,
+                            symbol,
                             now,
                             now,
                         ),
