@@ -241,6 +241,23 @@ class Bingx(Exchange):
         except ccxt.BaseError as e:
             raise OperationalException(e) from e
 
+    def fetch_l2_order_book(self, pair: str, limit: int = 100) -> dict:
+        """
+        BingX strictly requires limit to be one of [5, 10, 20, 50, 100, 500, 1000].
+        Freqtrade often passes 1 or other values which causes error 109400.
+        """
+        valid_limits = [5, 10, 20, 50, 100, 500, 1000]
+        # Find the smallest valid limit that is >= requested limit
+        bingx_limit = 5
+        for v in valid_limits:
+            if v >= limit:
+                bingx_limit = v
+                break
+        if limit > 1000:
+            bingx_limit = 1000
+            
+        return super().fetch_l2_order_book(pair, bingx_limit)
+
     def load_leverage_tiers(self) -> dict[str, list[dict]]:
         """
         BingX only supports ``fetchMarketLeverageTiers`` (one call per symbol). The default

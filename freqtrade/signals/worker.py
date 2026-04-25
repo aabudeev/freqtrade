@@ -76,11 +76,14 @@ class SignalWorker:
                         # Исполнение через RPC
                         if event.type == SignalType.ENTRY:
                             from freqtrade.persistence import Trade
-                            # Проверка: если уже есть открытая сделка по этой паре, не входим дублем (D.3)
+                            settings = self.store.get_settings()
+                            entry_mode = settings.get('entry_mode', 'single')
+
+                            # Проверка: если уже есть открытая сделка по этой паре
                             existing = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
-                            if existing:
-                                logger.info(f"Сделка по {event.symbol} уже открыта. Пропускаем сигнал {key}.")
-                                self.store.mark_status(key, "skipped", "Already in trade for this pair")
+                            if existing and entry_mode == 'single':
+                                logger.info(f"Сделка по {event.symbol} уже открыта. Пропускаем сигнал {key} (режим Single).")
+                                self.store.mark_status(key, "skipped", "Already in trade (Single mode)")
                                 continue
                             
                             from freqtrade.enums import SignalDirection

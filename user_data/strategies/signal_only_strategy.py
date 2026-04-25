@@ -33,6 +33,10 @@ class SignalOnlyStrategy(IStrategy):
     process_only_new_candles = False
     use_exit_signal = False
     startup_candle_count = 5
+    
+    # DCA / Position Adjustment (D.6)
+    position_adjustment_enable = True
+    max_entry_position_adjustment = 3 # До 3-х доборов
 
     order_types = {
         "entry": "limit",

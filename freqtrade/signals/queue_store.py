@@ -37,6 +37,7 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_mode', 'fixed');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_fixed_amount', '10');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_percentage', '3');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('default_leverage', '50');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('entry_mode', 'single');
 """
 
 
