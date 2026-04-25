@@ -68,5 +68,47 @@ async def index_html(rest_of_path: str):
     index_file = uibase / "index.html"
     if not index_file.is_file():
         return FileResponse(str(uibase.parent / "fallback_file.html"))
-    # Fall back to index.html, as indicated by vue router docs
-    return FileResponse(str(index_file))
+    
+    # Инъекция ссылки Signals в меню
+    content = index_file.read_text(encoding="utf-8")
+    injection = """
+    <script>
+    (function() {
+        function addSignalsLink() {
+            const nav = document.querySelector('.v-navigation-drawer__content .v-list') || 
+                        document.querySelector('.v-tabs-bar__content') ||
+                        document.querySelector('header .v-toolbar__content');
+            
+            if (nav && !document.getElementById('nav-signals')) {
+                const link = document.createElement('a');
+                link.id = 'nav-signals';
+                link.href = '/signals_dashboard';
+                link.target = '_blank';
+                link.className = 'v-tab v-btn v-btn--flat v-btn--text v-size--default';
+                link.style.textDecoration = 'none';
+                link.style.color = 'inherit';
+                link.innerHTML = '<span class="v-btn__content">Signals</span>';
+                
+                // Ищем куда вставить (рядом с Dashboard или Chart)
+                const items = nav.querySelectorAll('.v-tab, .v-list-item');
+                let inserted = false;
+                for (let item of items) {
+                    if (item.textContent.includes('Dashboard') || item.textContent.includes('Chart')) {
+                        item.parentNode.insertBefore(link, item.nextSibling);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) nav.appendChild(link);
+            }
+        }
+        setInterval(addSignalsLink, 2000);
+    })();
+    </script>
+    """
+    if "</body>" in content:
+        content = content.replace("</body>", injection + "</body>")
+    else:
+        content += injection
+
+    return HTMLResponse(content)

@@ -141,42 +141,6 @@ class Bingx(Exchange):
         self._api.verbose = False
         self._api_async.verbose = False
         super().additional_exchange_init()
-        print("!!! DEBUG_STDOUT: additional_exchange_init START")
-        
-        # 1. Синхронный перехват
-        orig_req_sync = self._api.request
-        def verbose_req_sync(path, *args, **kwargs):
-            method = args[1] if len(args) > 1 else "REQ"
-            print(f"!!! DEBUG_STDOUT_SYNC_REQ: {method} {path}")
-            import time
-            start = time.time()
-            try:
-                res = orig_req_sync(path, *args, **kwargs)
-                print(f"!!! DEBUG_STDOUT_SYNC_RES: {path} OK ({int((time.time()-start)*1000)}ms)")
-                return res
-            except Exception as e:
-                print(f"!!! DEBUG_STDOUT_SYNC_ERR: {path} FAILED: {e}")
-                raise e
-        self._api.request = verbose_req_sync
-
-        # 2. Асинхронный перехват
-        orig_req_async = self._api_async.request
-        async def verbose_req_async(path, *args, **kwargs):
-            method = args[1] if len(args) > 1 else "REQ"
-            print(f"!!! DEBUG_STDOUT_ASYNC_REQ: {method} {path}")
-            import time
-            start = time.time()
-            try:
-                res = await orig_req_async(path, *args, **kwargs)
-                print(f"!!! DEBUG_STDOUT_ASYNC_RES: {path} OK ({int((time.time()-start)*1000)}ms)")
-                return res
-            except Exception as e:
-                print(f"!!! DEBUG_STDOUT_ASYNC_ERR: {path} FAILED: {e}")
-                raise e
-        self._api_async.request = verbose_req_async
-
-        self._api.verbose = False
-        self._api_async.verbose = False
 
         if self._config.get("exchange", {}).get("sandbox"):
             self._api.set_sandbox_mode(True)
