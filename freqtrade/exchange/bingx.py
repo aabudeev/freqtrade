@@ -138,7 +138,27 @@ class Bingx(Exchange):
 
     def additional_exchange_init(self) -> None:
         super().additional_exchange_init()
-        # На BingX включаем песочницу напрямую через метод CCXT, так как Freqtrade сам это не делает
+        # Включаем супер-дебаг в STDOUT (мимо логгера)
+        self._api.verbose = True
+        self._api_async.verbose = True
+        
+        # Monkey-patching request for raw stdout debugging
+        orig_req = self._api_async.request
+        async def verbose_req(path, api='public', method='GET', params={}, headers=None, body=None, config={}, context={}):
+            url = self._api_async.url(path, api, method)
+            print(f"!!! DEBUG_STDOUT_REQ: {method} {url} | Params: {params}")
+            import time
+            start = time.time()
+            try:
+                res = await orig_req(path, api, method, params, headers, body, config, context)
+                print(f"!!! DEBUG_STDOUT_RES: {method} {url} OK ({int((time.time()-start)*1000)}ms)")
+                return res
+            except Exception as e:
+                print(f"!!! DEBUG_STDOUT_ERR: {method} {url} FAILED after {int((time.time()-start)*1000)}ms: {e}")
+                raise e
+        self._api_async.request = verbose_req
+
+        # На BingX включаем песочницу напрямую
         if self._config.get("exchange", {}).get("sandbox"):
             self._api.set_sandbox_mode(True)
             self._api_async.set_sandbox_mode(True)
