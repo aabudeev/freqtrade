@@ -34,11 +34,16 @@ class SignalWorker:
         is_sandbox = (target_mode == 'vst')
         
         if self.bot and self.bot.exchange:
-            # Принудительно меняем режим в CCXT (синхронном и асинхронном)
-            # В CCXT свойство называется 'sandbox'
-            if self.bot.exchange._api.sandbox != is_sandbox:
+            # Используем локальную переменную или getattr для проверки текущего режима
+            current_api_sandbox = getattr(self.bot.exchange._api, 'sandbox', None)
+            
+            # Если режим в базе не совпадает с режимом в API (или режим в API неизвестен)
+            if current_api_sandbox != is_sandbox:
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
+                # Принудительно устанавливаем флаг, чтобы CCXT знал текущее состояние
+                self.bot.exchange._api.sandbox = is_sandbox
+                self.bot.exchange._api_async.sandbox = is_sandbox
                 logger.info(f"Переключен режим биржи: {'SANDBOX (VST)' if is_sandbox else 'LIVE'}")
 
         if self.bot and self.bot.state != State.RUNNING:
