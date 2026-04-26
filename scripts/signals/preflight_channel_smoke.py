@@ -36,7 +36,11 @@ def _skip() -> bool:
 
 
 async def _run() -> int:
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
     if _skip():
         log.info("SKIP_TELEGRAM_CHANNEL_SMOKE set — skip channel smoke")

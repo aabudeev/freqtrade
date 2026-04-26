@@ -82,7 +82,11 @@ async def _run() -> int:
         log.info("ENABLE_TELEGRAM_SIGNAL_AUTH is not 1 — skip Telethon preflight")
         return 0
 
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
     token, chat_id = _bot_token(), _bot_chat_id()
     if not token or not chat_id:
