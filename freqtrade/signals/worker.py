@@ -28,37 +28,50 @@ class SignalWorker:
     def process_once(self) -> int:
         """
         """
-        # Сначала применяем настройки аккаунта (Real/Demo)
+        # Сначала применяем настройки аккаунта (Real/Demo/Simulation)
         settings = self.store.get_settings()
         target_mode = settings.get('exchange_mode', 'vst')
-        is_sandbox = (target_mode == 'vst')
+        
+        # Определяем флаги на основе выбранного режима
+        is_dry_run = (target_mode == 'dry_run')
+        is_sandbox = (target_mode != 'live') # Для dry_run и vst используем sandbox
         
         if self.bot and self.bot.exchange:
             # Используем локальную переменную или getattr для проверки текущего режима
             current_api_sandbox = getattr(self.bot.exchange._api, 'sandbox', None)
+            current_dry_run = self.bot.config.get('dry_run')
             
-            # Если режим в базе не совпадает с режимом в API (или режим в API неизвестен)
-            if current_api_sandbox != is_sandbox:
+            # Если любой из флагов не совпадает с желаемым
+            if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
+                # Настраиваем биржу
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
-                # Принудительно устанавливаем флаг, чтобы CCXT знал текущее состояние
                 self.bot.exchange._api.sandbox = is_sandbox
                 self.bot.exchange._api_async.sandbox = is_sandbox
                 
-                # КРИТИЧНО: Переключаем режим Dry Run самого бота
-                # Если мы в LIVE — dry_run должен быть False, если в VST — True
-                self.bot.config['dry_run'] = is_sandbox
-                self.bot.exchange._config['dry_run'] = is_sandbox
+                # Настраиваем режим Dry Run самого бота
+                self.bot.config['dry_run'] = is_dry_run
+                self.bot.exchange._config['dry_run'] = is_dry_run
+                if hasattr(self.bot.exchange, '_dry_run'):
+                    self.bot.exchange._dry_run = is_dry_run
                 
                 # Сбрасываем кэш рынков и кошельков
                 self.bot.exchange._markets = {}
                 self.bot.exchange._reload_markets = True
                 if hasattr(self.bot, 'wallets'):
                     self.bot.wallets.update()
-                    # Пересчитываем стартовый капитал под новый режим, чтобы статистика не сходила с ума
+                    # Пересчитываем стартовый капитал под новый режим
                     self.bot.wallets.start_cap = self.bot.wallets.get_total_stake_amount()
                 
-                logger.info(f"Переключен режим бота: {'DEMO (Dry Run)' if is_sandbox else 'REAL TRADING (Live)'}")
+                # Понятные логи
+                if is_dry_run:
+                    mode_name = "ИМИТАЦИЯ (DRY RUN - только внутренние расчеты)"
+                elif is_sandbox:
+                    mode_name = "ВИРТУАЛЬНАЯ ТОРГОВЛЯ (VST - реальные ордера на демо-счет)"
+                else:
+                    mode_name = "РЕАЛЬНАЯ ТОРГОВЛЯ (USDT - настоящие деньги)"
+                
+                logger.info(f"ВНИМАНИЕ! Режим изменен на: {mode_name}")
 
         if self.bot and self.bot.state != State.RUNNING:
             # Если бот не в RUNNING, не забираем новые сигналы
