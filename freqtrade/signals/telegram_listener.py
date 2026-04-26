@@ -67,16 +67,31 @@ class TelegramSignalsListener:
     def _thread_main(self) -> None:
         assert self._loop is not None
         asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._async_main())
-        except Exception:
-            logger.exception("Telegram signals listener loop crashed")
-        finally:
-            if not self._loop.is_closed():
-                try:
-                    self._loop.close()
-                except Exception:
-                    pass
+        
+        while self._running:
+            try:
+                self._loop.run_until_complete(self._async_main())
+            except Exception:
+                # If it crashed, log and retry unless we are shutting down
+                if self._running:
+                    logger.exception("Telegram signals listener loop crashed. Restarting in 10s...")
+                    time.sleep(10)
+                else:
+                    logger.info("Telegram signals listener loop ended.")
+            else:
+                # Normal exit from _async_main (e.g. client disconnected voluntarily)
+                if self._running:
+                    logger.warning("Telegram signals listener disconnected unexpectedly. Reconnecting...")
+                    time.sleep(5)
+                else:
+                    break
+        
+        # Cleanup loop
+        if not self._loop.is_closed():
+            try:
+                self._loop.close()
+            except Exception:
+                pass
 
     async def _async_main(self) -> None:
         from telethon import TelegramClient, events

@@ -31,7 +31,10 @@ class NetworkErrorFilter(logging.Filter):
                 'Connection reset by peer',
                 'ConnectionResetError',
                 'TimeoutError',
-                'Server closed the connection'
+                'Server closed the connection',
+                'Async code raised an exception',
+                'Connection to Telegram failed',
+                'Connect call failed'
             ]
             
             exc_str = str(exc_value)
