@@ -43,18 +43,22 @@ class SignalWorker:
             
             # Если любой из флагов не совпадает с желаемым
             if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
-                # Принудительно меняем URL-адреса, так как set_sandbox_mode иногда тупит
+                # Принудительно меняем базовый URL (для BingX это строка)
                 base_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
-                self.bot.exchange._api.urls['api']['public'] = base_url
-                self.bot.exchange._api.urls['api']['private'] = base_url
-                self.bot.exchange._api_async.urls['api']['public'] = base_url
-                self.bot.exchange._api_async.urls['api']['private'] = base_url
+                self.bot.exchange._api.urls['api'] = base_url
+                self.bot.exchange._api_async.urls['api'] = base_url
+                
+                # Сбрасываем hostname, чтобы CCXT пересчитал его из нового URL
+                self.bot.exchange._api.hostname = None
+                self.bot.exchange._api_async.hostname = None
 
-                # Настраиваем биржу (стандартным методом тоже на всякий случай)
+                # Настраиваем биржу
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api.sandbox = is_sandbox
                 self.bot.exchange._api_async.sandbox = is_sandbox
+                
+                logger.info(f"Активный URL биржи: {self.bot.exchange._api.urls['api']}")
                 
                 # Настраиваем режим Dry Run самого бота
                 self.bot.config['dry_run'] = is_dry_run
