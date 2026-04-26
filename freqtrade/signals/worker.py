@@ -43,29 +43,24 @@ class SignalWorker:
             
             # Если любой из флагов не совпадает с желаемым
             if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
-                # Принудительно меняем базовый URL (для BingX это словарь типов)
-                base_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
-                api_dict = {
-                    'fund': base_url,
-                    'spot': base_url,
-                    'swap': base_url,
-                    'contract': base_url,
-                    'wallets': base_url,
-                    'user': base_url,
-                    'subAccount': base_url,
-                    'account': base_url,
-                    'copyTrading': base_url,
-                    'cswap': base_url,
-                    'api': base_url
-                }
-                self.bot.exchange._api.urls['api'] = api_dict
-                self.bot.exchange._api_async.urls['api'] = api_dict
+                # Определяем базовые параметры для режима
+                mode_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
+                mode_host = 'open-api-vst.bingx.com' if is_sandbox else 'open-api.bingx.com'
 
-                # Настраиваем биржу
-                self.bot.exchange._api.set_sandbox_mode(is_sandbox)
-                self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
-                self.bot.exchange._api.sandbox = is_sandbox
-                self.bot.exchange._api_async.sandbox = is_sandbox
+                # Безопасно обновляем все URL-адреса в объекте биржи (и синхронном, и асинхронном)
+                for api_obj in [self.bot.exchange._api, self.bot.exchange._api_async]:
+                    # 1. Устанавливаем hostname
+                    api_obj.hostname = mode_host
+                    # 2. Устанавливаем sandbox флаг (стандарт CCXT)
+                    api_obj.set_sandbox_mode(is_sandbox)
+                    api_obj.sandbox = is_sandbox
+                    # 3. Принудительно правим словарь urls['api'], поддерживая и строки, и словари
+                    if 'api' in api_obj.urls:
+                        if isinstance(api_obj.urls['api'], dict):
+                            for k in api_obj.urls['api'].keys():
+                                api_obj.urls['api'][k] = mode_url
+                        else:
+                            api_obj.urls['api'] = mode_url
                 
                 logger.info(f"Активный режим: {'SANDBOX/VST' if is_sandbox else 'LIVE/USDT'}")
                 
