@@ -48,10 +48,6 @@ class SignalWorker:
                 self.bot.exchange._api.urls['api'] = base_url
                 self.bot.exchange._api_async.urls['api'] = base_url
                 
-                # Сбрасываем hostname, чтобы CCXT пересчитал его из нового URL
-                self.bot.exchange._api.hostname = None
-                self.bot.exchange._api_async.hostname = None
-
                 # Настраиваем биржу
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
