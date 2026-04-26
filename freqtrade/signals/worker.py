@@ -44,10 +44,21 @@ class SignalWorker:
                 # Принудительно устанавливаем флаг, чтобы CCXT знал текущее состояние
                 self.bot.exchange._api.sandbox = is_sandbox
                 self.bot.exchange._api_async.sandbox = is_sandbox
-                # Сбрасываем кэш рынков, чтобы бот перечитал их для нового режима
+                
+                # КРИТИЧНО: Переключаем режим Dry Run самого бота
+                # Если мы в LIVE — dry_run должен быть False, если в VST — True
+                self.bot.config['dry_run'] = is_sandbox
+                self.bot.exchange._config['dry_run'] = is_sandbox
+                
+                # Сбрасываем кэш рынков и кошельков
                 self.bot.exchange._markets = {}
                 self.bot.exchange._reload_markets = True
-                logger.info(f"Переключен режим биржи: {'SANDBOX (VST)' if is_sandbox else 'LIVE'}")
+                if hasattr(self.bot, 'wallets'):
+                    self.bot.wallets.update()
+                    # Пересчитываем стартовый капитал под новый режим, чтобы статистика не сходила с ума
+                    self.bot.wallets.start_cap = self.bot.wallets.get_total_stake_amount()
+                
+                logger.info(f"Переключен режим бота: {'DEMO (Dry Run)' if is_sandbox else 'REAL TRADING (Live)'}")
 
         if self.bot and self.bot.state != State.RUNNING:
             # Если бот не в RUNNING, не забираем новые сигналы
