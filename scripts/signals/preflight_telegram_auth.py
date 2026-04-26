@@ -97,7 +97,7 @@ async def _run() -> int:
         await _bot_send_message(
             token,
             chat_id,
-            "Telethon preflight: нет TELEGRAM_API_ID / TELEGRAM_API_HASH в окружении контейнера.",
+            "Telethon preflight: TELEGRAM_API_ID / TELEGRAM_API_HASH missing in environment.",
         )
         return 1
 
@@ -113,11 +113,11 @@ async def _run() -> int:
 
     proxy = telethon_proxy_from_env()
     if proxy:
-        log.info("Telethon MTProto через прокси (из TELEGRAM_MTPROXY / TG_PROXY / HTTP_PROXY)")
+        log.info("Telethon MTProto using proxy (via TELEGRAM_MTPROXY / TG_PROXY / HTTP_PROXY)")
     else:
         log.warning(
-            "Telethon MTProto без прокси: прямое подключение к dc.telegram.org. "
-            "При блокировке/таймаутах задайте TG_PROXY или TELEGRAM_MTPROXY (тот же URL, что для бота)."
+            "Telethon MTProto without proxy: direct connection to dc.telegram.org. "
+            "If blocked or timing out, set TG_PROXY or TELEGRAM_MTPROXY (same URL as for bot)."
         )
 
     client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)
@@ -129,10 +129,10 @@ async def _run() -> int:
             await _bot_send_message(
                 token,
                 chat_id,
-                "Telethon: нет связи с серверами Telegram (MTProto, таймаут). "
-                "Задайте в .env прокси для MTProto — обычно тот же, что TG_PROXY "
-                "(socks5://…), пересоберите/перезапустите контейнер. "
-                f"Подробности: {e!s}",
+                "Telethon: no connection to Telegram servers (MTProto, timeout). "
+                "Set MTProto proxy in .env (usually same as TG_PROXY, e.g. socks5://...), "
+                "then rebuild/restart the container. "
+                f"Details: {e!s}",
             )
         except Exception:
             pass
@@ -150,15 +150,15 @@ async def _run() -> int:
             await _bot_send_message(
                 token,
                 chat_id,
-                f"✅ Telethon (канал): сессия активна — {handle}",
+                f"✅ Telethon (channel): session active — {handle}",
             )
             return 0
 
         await _bot_send_message(
             token,
             chat_id,
-            "🔐 Telethon: нужна авторизация. В Telegram: Настройки → Устройства → "
-            "Подключить устройство — отсканируйте следующий QR.",
+            "🔐 Telethon: authorization required. In Telegram: Settings → Devices → "
+            "Link Desktop Device — scan the following QR.",
         )
 
         while True:
@@ -169,25 +169,25 @@ async def _run() -> int:
                     token,
                     chat_id,
                     png,
-                    "QR для входа Telethon (сканировать приложением Telegram). Код обновится, если истечёт.",
+                    "QR code for Telethon login (scan with Telegram app). Code will refresh if it expires.",
                 )
             except Exception as e:
                 log.exception("sendPhoto failed")
-                await _bot_send_message(token, chat_id, f"Не удалось отправить QR: {e!s}")
+                await _bot_send_message(token, chat_id, f"Failed to send QR: {e!s}")
                 return 1
 
             try:
                 await qr_login.wait(timeout=120)
                 break
             except asyncio.TimeoutError:
-                await _bot_send_message(token, chat_id, "QR истёк, присылаю новый…")
+                await _bot_send_message(token, chat_id, "QR expired, sending a new one…")
             except errors.SessionPasswordNeededError:
                 pwd = os.environ.get("TELEGRAM_2FA_PASSWORD", "").strip()
                 if not pwd:
                     await _bot_send_message(
                         token,
                         chat_id,
-                        "Нужен облачный пароль 2FA. Задайте TELEGRAM_2FA_PASSWORD в .env и перезапустите контейнер.",
+                        "2FA Cloud Password required. Set TELEGRAM_2FA_PASSWORD in .env and restart the container.",
                     )
                     return 1
                 await client.sign_in(password=pwd)
@@ -199,7 +199,7 @@ async def _run() -> int:
         await _bot_send_message(
             token,
             chat_id,
-            f"✅ Telethon авторизован: {handle}. Сессия сохранена.",
+            f"✅ Telethon authorized: {handle}. Session saved.",
         )
         return 0
     finally:

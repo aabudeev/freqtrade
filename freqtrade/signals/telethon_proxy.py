@@ -1,6 +1,6 @@
 """
-PySocks tuple for Telethon MTProto. HTTP(S)_PROXY / TG_PROXY в окружении не подхватываются сами —
-нужно передать proxy= в TelegramClient.
+PySocks tuple for Telethon MTProto. HTTP(S)_PROXY / TG_PROXY in environment are not picked up automatically —
+need to pass proxy= to TelegramClient.
 """
 from __future__ import annotations
 

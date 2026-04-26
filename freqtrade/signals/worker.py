@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 class SignalWorker:
     """
-    Фоновый воркер для обработки входящих сигналов из БД.
-    На этапе MVP (C.3.2) только парсит сообщения и обновляет статус.
+    Background worker for processing incoming signals from the database.
+    Integrates with FreqtradeBot to execute trades based on external signals.
     """
     def __init__(self, store: SignalQueueStore, bot: Optional['FreqtradeBot'] = None, sleep_interval: float = 5.0):
         self.store = store
@@ -27,6 +27,8 @@ class SignalWorker:
 
     def process_once(self) -> int:
         """
+        Processes pending signals from the queue.
+        Handles account mode switching (Live/VST/DryRun) and trade execution.
         """
         # Account settings (Real/Demo/Simulation)
         settings = self.store.get_settings()
@@ -37,13 +39,13 @@ class SignalWorker:
         is_sandbox = (target_mode != 'live') # Use sandbox for dry_run and vst
         
         if self.bot and self.bot.exchange:
-            # Используем локальную переменную или getattr для проверки текущего режима
+            # Check current sandbox status and dry_run flag
             current_api_sandbox = getattr(self.bot.exchange._api, 'sandbox', None)
             current_dry_run = self.bot.config.get('dry_run')
             
-            # Если любой из флагов не совпадает с желаемым
+            # If any flag doesn't match the desired mode
             if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
-                # Определяем базовые параметры для режима
+                # Define base parameters for the mode
                 mode_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
                 mode_host = 'open-api-vst.bingx.com' if is_sandbox else 'open-api.bingx.com'
 
@@ -91,7 +93,7 @@ class SignalWorker:
                 logger.info(f"ATTENTION! Mode changed to: {mode_name}")
 
         if self.bot and self.bot.state != State.RUNNING:
-            # Если бот не в RUNNING, не забираем новые сигналы
+            # If bot is not in RUNNING state, do not process new signals
             return 0
             
         claimed = self.store.claim_pending(limit=10)
@@ -105,51 +107,51 @@ class SignalWorker:
             try:
                 event = parse_signal_text(text)
                 if event is None:
-                    # Парсинг не удался
-                    logger.warning(f"Не удалось распарсить сигнал {key}: {text[:50]}...")
+                    # Parsing failed
+                    logger.warning(f"Failed to parse signal {key}: {text[:50]}...")
                     self.store.mark_status(key, "failed", "Parse failed or unknown format")
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
                             'type': RPCMessageType.WARNING,
-                            'status': f"⚠️ Ошибка парсинга сигнала:\n{text[:100]}..."
+                            'status': f"⚠️ Signal parsing error:\n{text[:100]}..."
                         })
                 else:
-                    # Проверка TTL (4 часа)
+                    # TTL check (4 hours)
                     occ_dt = datetime.fromisoformat(row['occurred_at'])
-                    # occurred_at в базе хранится как naive UTC
+                    # occurred_at is stored as naive UTC in DB
                     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                     age_seconds = (now_utc - occ_dt).total_seconds()
                     
                     if age_seconds > 4 * 3600:
-                        logger.warning(f"Сигнал {key} слишком старый ({age_seconds/3600:.1f}ч). Пропускаем.")
+                        logger.warning(f"Signal {key} is too old ({age_seconds/3600:.1f}h). Skipping.")
                         self.store.mark_status(key, "skipped", f"TTL expired: age {age_seconds/3600:.1f}h")
                         continue
 
-                    logger.info(f"Сигнал {key} успешно распарсен: {event}")
+                    logger.info(f"Signal {key} successfully parsed: {event}")
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
                             'type': RPCMessageType.STATUS,
-                            'status': f"✅ Распарсен сигнал {event.type.name} {event.symbol}"
+                            'status': f"✅ Parsed signal {event.type.name} {event.symbol}"
                         })
                     
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                        # Исполнение через RPC
+                        # Execution via RPC
                         if event.type == SignalType.ENTRY:
                             from freqtrade.persistence import Trade
                             settings = self.store.get_settings()
                             entry_mode = settings.get('entry_mode', 'single')
 
-                            # Проверка: если уже есть открытая сделка по этой паре
+                            # Check: if there's already an open trade for this pair
                             existing = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
                             if existing and entry_mode == 'single':
-                                logger.info(f"Сделка по {event.symbol} уже открыта. Пропускаем сигнал {key} (режим Single).")
+                                logger.info(f"Trade for {event.symbol} is already open. Skipping signal {key} (Single mode).")
                                 self.store.mark_status(key, "skipped", "Already in trade (Single mode)")
                                 continue
                             
                             from freqtrade.enums import SignalDirection
                             
-                            # Входим по рынку одним ордером (Market)
-                            price = None  # Игнорируем цену сигнала для первого рыночного входа
+                            # Market entry with single order
+                            price = None  
                             order_side = SignalDirection.SHORT if event.side == SignalSide.SHORT else SignalDirection.LONG
                             
                             settings = self.store.get_settings()
@@ -162,16 +164,16 @@ class SignalWorker:
                                 try:
                                     free_bal = self.bot.wallets.get_free(stake_currency)
                                     stake_amount = free_bal * perc
-                                    logger.info(f"Рассчитан размер входа: {stake_amount} {stake_currency} ({perc*100}% от свободного {free_bal})")
+                                    logger.info(f"Calculated stake size: {stake_amount} {stake_currency} ({perc*100}% of free {free_bal})")
                                 except Exception as e:
-                                    logger.error(f"Не удалось получить баланс: {e}")
+                                    logger.error(f"Failed to get balance: {e}")
                                     stake_amount = 10.0 # fallback
                             
                             leverage = event.leverage
                             if not leverage:
                                 leverage = float(settings.get('default_leverage', 50.0))
 
-                            # Принудительно выставляем ISOLATED (D.4)
+                            # Force ISOLATED margin mode
                             try:
                                 self.bot.exchange.set_margin_mode('ISOLATED', event.symbol)
                             except Exception:
@@ -191,7 +193,7 @@ class SignalWorker:
                                 trade.set_custom_data("signal_id", key)
                                 if event.stop:
                                     trade.set_custom_data("signal_sl", event.stop)
-                                    # Устанавливаем стоп-лосс сразу, чтобы stoploss_on_exchange сработал корректно
+                                    # Set initial stop-loss immediately for stoploss_on_exchange
                                     trade.stop_loss = float(event.stop)
                                     if trade.open_rate:
                                         trade.stop_loss_pct = (trade.stop_loss / trade.open_rate) - 1
@@ -206,42 +208,42 @@ class SignalWorker:
                                 
                         elif event.type in (SignalType.TAKE_PROFIT, SignalType.STOP_LOSS):
                             from freqtrade.persistence import Trade
-                            # Ищем открытую сделку по монете
+                            # Search for open trade for this coin
                             trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
                             if trade:
                                 self.bot.rpc._rpc._rpc_force_exit(str(trade.id), ordertype="market")
-                                logger.info(f"Закрыт Trade {trade.id} по сигналу {key}")
+                                logger.info(f"Closed Trade {trade.id} via signal {key}")
                                 self.store.mark_status(key, "sent")
                             else:
-                                logger.info(f"Сделка для выхода {event.symbol} не найдена. Пропускаем.")
+                                logger.info(f"Trade for exit {event.symbol} not found. Skipping.")
                                 self.store.mark_status(key, "skipped", "Open trade not found for exit")
                     else:
-                        # В тестах или если bot не передан
+                        # In tests or if bot is not passed
                         self.store.mark_status(key, "parsed")
             except Exception as e:
                 err_msg = str(e)
                 if "trader is not running" in err_msg.lower():
-                    logger.warning(f"Бот не в RUNNING при обработке {key}. Возвращаем в pending.")
+                    logger.warning(f"Bot is not in RUNNING state while processing {key}. Returning to pending.")
                     self.store.mark_status(key, "pending")
                 else:
-                    logger.exception(f"Исключение при парсинге/выполнении сигнала {key}")
+                    logger.exception(f"Exception during signal parsing/execution for {key}")
                     self.store.mark_status(key, "failed", err_msg)
                     if getattr(self, 'bot', None) and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
                             'type': RPCMessageType.STATUS,
-                            'status': f"❌ Ошибка исполнения сигнала {key}:\n`{err_msg}`"
+                            'status': f"❌ Signal execution error {key}:\n`{err_msg}`"
                         })
                 
         return len(claimed)
 
     def _sync_trade_statuses(self):
         """
-        Периодически проверяет статусы сделок во Freqtrade и обновляет ingest_queue.
+        Periodically checks trade statuses in Freqtrade and updates ingest_queue.
         """
         try:
             from freqtrade.persistence import Trade
             
-            # Находим все сигналы, которые сейчас в процессе (sent)
+            # Find all signals currently in progress (sent)
             conn = self.store._connect()
             try:
                 cursor = conn.cursor()
@@ -256,35 +258,35 @@ class SignalWorker:
             for key in active_signals:
                 tag_full = f"telegram_{key}"
                 tag_short = f"telegram_{key[:8]}"
-                # Ищем сделку во Freqtrade по любому из тегов
+                # Search for trade in Freqtrade by tag
                 trade = Trade.get_trades([Trade.enter_tag.in_([tag_full, tag_short])]).first()
                 
                 if trade:
                     if not trade.is_open:
                         new_status = "closed_tp"
-                        # Если профит отрицательный или есть SL в причине выхода
+                        # If profit is negative or SL mentioned in exit reason
                         if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
                            (trade.close_profit and trade.close_profit < 0):
                             new_status = "closed_sl"
                             
-                        logger.info(f"Сделка по сигналу {key} закрыта ({trade.exit_reason}). Статус: {new_status}")
+                        logger.info(f"Trade for signal {key} closed ({trade.exit_reason}). Status: {new_status}")
                         self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
                     else:
                         pass
 
         except Exception as e:
-            logger.error(f"Ошибка при синхронизации статусов сделок: {e}")
+            logger.error(f"Error during trade status synchronization: {e}")
 
     def _run_diagnostic(self):
         """
-        Супер-подробная диагностика сети. Пишет в лог тайминги.
+        Detailed network diagnostics for troubleshooting.
         """
         import time
         import socket
         try:
             results = ["--- NETWORK DIAGNOSTIC ---"]
             
-            # 1. Проверка прокси-порта
+            # 1. Proxy check
             start = time.time()
             try:
                 s = socket.create_connection(("amneziawg2", 1080), timeout=5)
@@ -294,16 +296,15 @@ class SignalWorker:
                 results.append(f"Proxy connection FAILED: {e}")
 
             if getattr(self, 'bot', None) and self.bot.exchange:
-                # 2. Публичный API (без подписи)
+                # 2. Public API check
                 start = time.time()
                 try:
-                    # Используем _api (внутренний CCXT объект во Freqtrade)
                     self.bot.exchange._api.fetch_time()
                     results.append(f"BingX Public API (fetch_time): OK ({int((time.time()-start)*1000)}ms)")
                 except Exception as e:
                     results.append(f"BingX Public API FAILED: {e}")
 
-                # 3. Приватный API (с ключами)
+                # 3. Private API check
                 start = time.time()
                 try:
                     self.bot.exchange.get_balances()
@@ -311,12 +312,14 @@ class SignalWorker:
                 except Exception as e:
                     results.append(f"BingX Private API FAILED: {e}")
             
-            logger.info("\n".join(results))
+            logger.info("--- NETWORK DIAGNOSTIC ---")
+            for res in results[1:]:
+                logger.info(res)
         except Exception as e:
             logger.error(f"Diagnostic error: {e}")
 
     def _run_loop(self):
-        logger.info("SignalWorker запущен")
+        logger.info("SignalWorker started")
         import time
         last_sync = 0
         last_diag = 0
@@ -325,12 +328,11 @@ class SignalWorker:
                 self.process_once()
                 
                 now = time.time()
-                # Синхронизация статусов раз в 30 секунд
+                # Sync trade statuses every 30 seconds
                 if now - last_sync > 30:
                     self._sync_trade_statuses()
                     last_sync = now
                 
-                # Диагностика раз в 2 минуты (или чаще если надо)
                 # Diagnostics every 2 minutes
                 if now - last_diag > 120:
                     self._run_diagnostic()

@@ -1,5 +1,5 @@
 # pragma pylint: disable=missing-docstring
-"""Только ручные/форс-входы (Telegram / API). Автоматических сигналов нет."""
+"""Manual/Force Entry Only Strategy (Telegram / API). No automated signals."""
 
 from pandas import DataFrame
 from datetime import datetime
@@ -10,9 +10,9 @@ from freqtrade.persistence import Trade
 
 class SignalOnlyStrategy(IStrategy):
     """
-    Не выставляет enter_long/enter_short — сделки только через
-    /forcelong, /forceshort или REST POST /forceenter (при force_entry_enable).
-    Выходы: minimal_roi, stoploss, /forceexit (exit_signal отключён).
+    Strategy for executing external signals.
+    Does not generate entry signals. Entries are made via /forcelong, /forceshort, or SignalWorker.
+    Exits: minimal_roi, stoploss, /forceexit, and custom SL/TP logic.
     """
 
     INTERFACE_VERSION = 3
@@ -29,20 +29,20 @@ class SignalOnlyStrategy(IStrategy):
     trailing_only_offset_is_reached = True
 
     timeframe = "5m"
-    # SL-Watchdog (C.4.4): False заставляет бота проверять SL на каждом тике (~5с)
+    # SL-Watchdog (C.4.4): Set to False to check SL on every tick (~5s) instead of just on new candles
     process_only_new_candles = False
     use_exit_signal = False
     startup_candle_count = 5
     
     # DCA / Position Adjustment (D.6)
     position_adjustment_enable = True
-    max_entry_position_adjustment = 3 # До 3-х доборов
+    max_entry_position_adjustment = 3 # Up to 3 additional entries
 
     order_types = {
-        "entry": "market",            # Вход по рынку (как в сигналах)
-        "exit": "limit",             # Выход лимиткой (по цене тейка)
-        "stoploss": "market",        # Стоп по рынку
-        "stoploss_on_exchange": True, # ВЫСТАВЛЯТЬ СТОП НА БИРЖЕ
+        "entry": "market",            # Market entry (as in signals)
+        "exit": "limit",              # Limit exit (at target price)
+        "stoploss": "market",         # Market stop-loss
+        "stoploss_on_exchange": True, # PLACE STOP-LOSS ON THE EXCHANGE
     }
     order_time_in_force = {"entry": "GTC", "exit": "GTC"}
 
@@ -77,6 +77,7 @@ class SignalOnlyStrategy(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
+        # Get stop-loss price from signal custom data
         signal_sl = trade.get_custom_data("signal_sl")
         if signal_sl is not None:
             sl_price = float(signal_sl)
@@ -87,11 +88,12 @@ class SignalOnlyStrategy(IStrategy):
                 if sl_price > current_rate:
                     return 1 - (sl_price / current_rate)
         
-        # Fallback to default stoploss if not specified or already hit
+        # Fallback to default stoploss if not specified
         return self.stoploss
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:
+        # Get take-profit price from signal custom data
         signal_tp = trade.get_custom_data("signal_tp")
         if signal_tp is not None:
             tp_price = float(signal_tp)

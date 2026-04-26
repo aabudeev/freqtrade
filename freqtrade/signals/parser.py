@@ -48,28 +48,28 @@ _EXIT_STOP_PATTERN = re.compile(r"^\s*([A-Za-z0-9]+)\s*-\s*стоп\s*$", re.IGN
 def parse_signal_text(text: str) -> Optional[SignalEvent]:
     """
     Parses raw Telegram text into a SignalEvent.
-    Returns None if message is not recognized.
+    Returns None if message is not recognized or validation fails.
     """
     if not text:
         return None
         
     text = text.strip()
     
-    # Проверяем на выход (Take Profit)
+    # Check for Take Profit exit signal
     take_match = _EXIT_TAKE_PATTERN.search(text)
     if take_match:
         symbol = take_match.group(1).upper()
         pair = f"{symbol}/USDT:USDT"
         return SignalEvent(type=SignalType.TAKE_PROFIT, symbol=pair)
         
-    # Проверяем на выход (Stop Loss)
+    # Check for Stop Loss exit signal
     stop_match = _EXIT_STOP_PATTERN.search(text)
     if stop_match:
         symbol = stop_match.group(1).upper()
         pair = f"{symbol}/USDT:USDT"
         return SignalEvent(type=SignalType.STOP_LOSS, symbol=pair)
         
-    # Проверяем на вход
+    # Check for Entry signal
     side_match = _ENTRY_SIDE_PATTERN.search(text)
     if side_match:
         side_str = side_match.group(1).upper()
@@ -91,10 +91,42 @@ def parse_signal_text(text: str) -> Optional[SignalEvent]:
         p1 = float(price_match.group(1))
         p2 = float(price_match.group(2)) if price_match.group(2) else p1
         entry_range = (min(p1, p2), max(p1, p2))
+        avg_entry = sum(entry_range) / 2.0
         
         target = float(target_match.group(1))
         stop_price = float(stop_match.group(1))
         
+        # --- VALIDATION (SAFETY FILTERS) ---
+        max_diff_mult = 0.50 # Maximum 50% deviation from entry price
+        
+        # 1. Logical direction check
+        if side == SignalSide.LONG:
+            if target <= entry_range[0]:
+                logger.error(f"Validation failed: LONG target {target} <= entry {entry_range[0]}")
+                return None
+            if stop_price >= entry_range[1]:
+                logger.error(f"Validation failed: LONG stop {stop_price} >= entry {entry_range[1]}")
+                return None
+        else: # SHORT
+            if target >= entry_range[1]:
+                logger.error(f"Validation failed: SHORT target {target} >= entry {entry_range[1]}")
+                return None
+            if stop_price <= entry_range[0]:
+                logger.error(f"Validation failed: SHORT stop {stop_price} <= entry {entry_range[0]}")
+                return None
+
+        # 2. Intraday filter (Anomaly detection)
+        target_diff = abs(target - avg_entry) / avg_entry
+        stop_diff = abs(stop_price - avg_entry) / avg_entry
+        
+        if target_diff > max_diff_mult:
+            logger.error(f"Validation failed: Target {target} is too far ({target_diff*100:.1f}%) from entry")
+            return None
+        if stop_diff > max_diff_mult:
+            logger.error(f"Validation failed: Stop {stop_price} is too far ({stop_diff*100:.1f}%) from entry")
+            return None
+        # -------------------------------
+
         leverage = None
         if leverage_match:
             leverage = int(leverage_match.group(1))
