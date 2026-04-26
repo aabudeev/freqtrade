@@ -712,7 +712,7 @@ class Exchange:
             and (self._last_markets_refresh + self.markets_refresh_interval > dt_ts())
         ):
             return None
-        logger.debug("Performing scheduled market reload..")
+        logger.info("Performing scheduled market reload..")
         try:
             # on initial load, we retry 3 times to ensure we get the markets
             retries: int = 3 if force else 0

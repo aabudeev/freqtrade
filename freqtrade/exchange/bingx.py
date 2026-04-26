@@ -326,6 +326,7 @@ class Bingx(Exchange):
 
         chunk_list = list(chunks(coros, _BINGX_LEVERAGE_TIERS_CHUNK))
         for i, input_coro in enumerate(chunk_list):
+            logger.info(f"BingX: fetching leverage tier chunk {i+1}/{len(chunk_list)}...")
             with self._loop_lock:
                 results = self.loop.run_until_complete(gather_results(input_coro))
 
