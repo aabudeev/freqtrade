@@ -13,6 +13,38 @@ from freqtrade.loggers.ft_rich_handler import FtRichHandler
 from freqtrade.loggers.rich_console import get_rich_console
 
 
+class NetworkErrorFilter(logging.Filter):
+    """
+    Filter to suppress long stack traces for common network/proxy errors.
+    Converts a multi-line traceback into a single-line info/warning.
+    """
+    def filter(self, record):
+        if record.exc_info:
+            exc_type, exc_value, _ = record.exc_info
+            # List of patterns that usually indicate temporary network/proxy issues
+            noisy_patterns = [
+                'ProxyError',
+                'NetworkError',
+                'ProtocolError',
+                'Malformed reply',
+                'TTL expired',
+                'Connection reset by peer',
+                'ConnectionResetError',
+                'TimeoutError',
+                'Server closed the connection'
+            ]
+            
+            exc_str = str(exc_value)
+            exc_name = exc_type.__name__ if exc_type else ""
+            
+            if any(p in exc_str or p in exc_name for p in noisy_patterns):
+                # Clean up: append error to message and remove the traceback
+                record.msg = f"{record.msg} | Network Issues: {exc_str}"
+                record.exc_info = None
+                record.exc_text = None
+        return True
+
+
 # from freqtrade.loggers.std_err_stream_handler import FTStdErrStreamHandler
 
 
@@ -219,6 +251,11 @@ def setup_logging(config: Config) -> None:
     # Add buffer handler to root logger
     if bufferHandler not in logging.root.handlers:
         logging.root.addHandler(bufferHandler)
+
+    # Apply NetworkErrorFilter to all handlers to suppress stack traces
+    net_filter = NetworkErrorFilter()
+    for handler in logging.root.handlers:
+        handler.addFilter(net_filter)
 
     # Set color system for console output
     if config.get("print_colorized", True):
