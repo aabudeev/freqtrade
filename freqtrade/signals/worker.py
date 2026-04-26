@@ -43,7 +43,14 @@ class SignalWorker:
             
             # Если любой из флагов не совпадает с желаемым
             if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
-                # Настраиваем биржу
+                # Принудительно меняем URL-адреса, так как set_sandbox_mode иногда тупит
+                base_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
+                self.bot.exchange._api.urls['api']['public'] = base_url
+                self.bot.exchange._api.urls['api']['private'] = base_url
+                self.bot.exchange._api_async.urls['api']['public'] = base_url
+                self.bot.exchange._api_async.urls['api']['private'] = base_url
+
+                # Настраиваем биржу (стандартным методом тоже на всякий случай)
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api.sandbox = is_sandbox
