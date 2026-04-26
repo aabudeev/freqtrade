@@ -137,10 +137,10 @@ class Bingx(Exchange):
             initial_order=initial_order,
         )
 
-    def additional_exchange_init(self) -> None:
+    def ft_additional_exchange_init(self) -> None:
         self._api.verbose = False
         self._api_async.verbose = False
-        super().additional_exchange_init()
+        super().ft_additional_exchange_init()
 
         if self._config.get("exchange", {}).get("sandbox"):
             self._api.set_sandbox_mode(True)
@@ -157,11 +157,11 @@ class Bingx(Exchange):
         api_url = self._api.urls.get('api', {})
         active_url = api_url.get('swap', 'unknown') if isinstance(api_url, dict) else api_url
         keys = list(balances.keys())[:10] # first 10 keys
-        logger.info(f"BALANCES DEBUG (is_vst={is_vst}, URL={active_url}): keys found: {keys}")
+        logger.debug(f"BALANCES DEBUG (is_vst={is_vst}, URL={active_url}): keys found: {keys}")
         if "USDT" in balances:
-            logger.info(f"USDT Balance: {balances['USDT']['total']}")
+            logger.debug(f"USDT Balance: {balances['USDT']['total']}")
         if "VST" in balances:
-            logger.info(f"VST Balance: {balances['VST']['total']}")
+            logger.debug(f"VST Balance: {balances['VST']['total']}")
 
         if is_vst and "VST" in balances:
             balances["USDT"] = balances.pop("VST")

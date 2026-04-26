@@ -54,7 +54,9 @@ class SignalWorker:
                     # 2. Set sandbox flag (CCXT standard)
                     api_obj.set_sandbox_mode(is_sandbox)
                     api_obj.sandbox = is_sandbox
-                    # 3. Force update urls['api'] dictionary/string
+                    # 3. Disable verbose logging (avoid flooding)
+                    api_obj.verbose = False
+                    # 4. Force update urls['api'] dictionary/string
                     if 'api' in api_obj.urls:
                         if isinstance(api_obj.urls['api'], dict):
                             for k in api_obj.urls['api'].keys():
