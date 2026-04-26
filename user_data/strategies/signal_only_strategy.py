@@ -19,8 +19,8 @@ class SignalOnlyStrategy(IStrategy):
 
     can_short: bool = False
 
-    minimal_roi = {"60": 0.01, "30": 0.02, "0": 0.04}
-    stoploss = -0.10
+    minimal_roi = {"0": 10.0}  # 1000% profit (effectively disabled)
+    stoploss = -0.99           # 99% loss (effectively disabled, using custom_stoploss instead)
     
     # Trailing TP (C.4.3)
     trailing_stop = True
@@ -39,10 +39,10 @@ class SignalOnlyStrategy(IStrategy):
     max_entry_position_adjustment = 3 # До 3-х доборов
 
     order_types = {
-        "entry": "limit",
-        "exit": "limit",
-        "stoploss": "market",
-        "stoploss_on_exchange": False,
+        "entry": "market",            # Вход по рынку (как в сигналах)
+        "exit": "limit",             # Выход лимиткой (по цене тейка)
+        "stoploss": "market",        # Стоп по рынку
+        "stoploss_on_exchange": True, # ВЫСТАВЛЯТЬ СТОП НА БИРЖЕ
     }
     order_time_in_force = {"entry": "GTC", "exit": "GTC"}
 

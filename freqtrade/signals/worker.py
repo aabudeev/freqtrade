@@ -191,9 +191,15 @@ class SignalWorker:
                                 trade.set_custom_data("signal_id", key)
                                 if event.stop:
                                     trade.set_custom_data("signal_sl", event.stop)
+                                    # Устанавливаем стоп-лосс сразу, чтобы stoploss_on_exchange сработал корректно
+                                    trade.stop_loss = float(event.stop)
+                                    if trade.open_rate:
+                                        trade.stop_loss_pct = (trade.stop_loss / trade.open_rate) - 1
+                                    
                                 if event.target:
                                     trade.set_custom_data("signal_tp", event.target)
-                                logger.info(f"Создан Trade {trade.id} для сигнала {key}")
+                                
+                                logger.info(f"Created Trade {trade.id} for signal {key}. SL: {event.stop}, TP: {event.target}")
                                 self.store.mark_status(key, "sent")
                             else:
                                 self.store.mark_status(key, "failed", "Force entry failed")
