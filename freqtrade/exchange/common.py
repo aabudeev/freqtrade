@@ -12,6 +12,16 @@ from freqtrade.mixins import LoggingMixin
 logger = logging.getLogger(__name__)
 __logging_mixin = None
 
+# Methods that fetch many pairs and clutter logs on every heartbeat
+NOISY_METHODS = {
+    'fetch_ohlcv', 
+    '_async_get_candle_history', 
+    'fetch_ticker', 
+    'fetch_tickers', 
+    'fetch_l2_order_book',
+    'get_market_leverage_tiers'
+}
+
 
 def _reset_logging_mixin():
     """
@@ -123,7 +133,11 @@ def retrier_async(f):
         count = kwargs.pop("count", API_RETRY_COUNT)
         kucoin = args[0].name == "KuCoin"  # Check if the exchange is KuCoin.
         current_attempt = requested_retries - count + 1
-        logger.info(f"API CALL: {f.__name__} (attempt {current_attempt}/{requested_retries + 1})")
+        
+        # Log only if it's NOT a noisy method OR it's a retry (attempt > 1)
+        if f.__name__ not in NOISY_METHODS or current_attempt > 1:
+            logger.info(f"API CALL: {f.__name__} (attempt {current_attempt}/{requested_retries + 1})")
+            
         try:
             return await f(*args, **kwargs)
         except TemporaryError as ex:
@@ -180,7 +194,11 @@ def retrier(_func: F | None = None, *, retries=API_RETRY_COUNT):
             requested_retries = kwargs.get("count", retries)
             count = kwargs.pop("count", retries)
             current_attempt = requested_retries - count + 1
-            logger.info(f"API CALL: {f.__name__} (attempt {current_attempt}/{requested_retries + 1})")
+            
+            # Same filtering for sync retrier
+            if f.__name__ not in NOISY_METHODS or current_attempt > 1:
+                logger.info(f"API CALL: {f.__name__} (attempt {current_attempt}/{requested_retries + 1})")
+                
             try:
                 return f(*args, **kwargs)
             except (TemporaryError, RetryableOrderError) as ex:
