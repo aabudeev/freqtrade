@@ -50,13 +50,13 @@ class SignalQueueStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(SCHEMA)
-            # Миграция: добавляем колонку symbol если её нет
+            # Migration: add symbol column if missing
             try:
                 con.execute("ALTER TABLE ingest_queue ADD COLUMN symbol TEXT")
             except sqlite3.OperationalError:
                 pass
                 
-            # Лечим старые записи: если symbol пуст, пробуем вытащить из текста
+            # Legacy fix: if symbol is empty, try to extract from text
             rows = con.execute("SELECT idempotency_key, text FROM ingest_queue WHERE symbol IS NULL").fetchall()
             if rows:
                 import re
@@ -83,7 +83,7 @@ class SignalQueueStore:
                     # Quick extraction of symbol for indexing/filtering
                     import re
                     symbol = None
-                    # Ищем что-то похожее на BTC/USDT или просто BTC в контексте "Монета:"
+                    # Look for something like BTC/USDT or just BTC in context of "Coin:" or "Pair:"
                     m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', event.text, re.I)
                     if m:
                         symbol = m.group(1).strip().upper()
@@ -129,8 +129,8 @@ class SignalQueueStore:
 
     def claim_pending(self, limit: int = 10) -> list[dict]:
         """
-        Забирает до `limit` записей со статусом 'pending' и переводит их в 'processing'.
-        Возвращает список словарей-записей.
+        Claims up to `limit` records with status 'pending' and moves them to 'processing'.
+        Returns list of record dictionaries.
         """
         now = datetime.now(UTC).replace(tzinfo=None).isoformat()
         with self._lock:
@@ -155,8 +155,8 @@ class SignalQueueStore:
 
     def mark_status(self, idempotency_key: str, status: str, error_message: str | None = None) -> None:
         """
-        Обновляет статус записи (например, на 'parsed', 'failed', 'sent').
-        Сохраняет сообщение об ошибке, если оно передано.
+        Updates record status (e.g., 'parsed', 'failed', 'sent').
+        Saves error message if provided.
         """
         now = datetime.now(UTC).replace(tzinfo=None).isoformat()
         with self._lock:

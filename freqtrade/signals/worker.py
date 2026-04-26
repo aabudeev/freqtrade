@@ -28,13 +28,13 @@ class SignalWorker:
     def process_once(self) -> int:
         """
         """
-        # Сначала применяем настройки аккаунта (Real/Demo/Simulation)
+        # Account settings (Real/Demo/Simulation)
         settings = self.store.get_settings()
         target_mode = settings.get('exchange_mode', 'vst')
         
-        # Определяем флаги на основе выбранного режима
+        # Flags based on mode
         is_dry_run = (target_mode == 'dry_run')
-        is_sandbox = (target_mode != 'live') # Для dry_run и vst используем sandbox
+        is_sandbox = (target_mode != 'live') # Use sandbox for dry_run and vst
         
         if self.bot and self.bot.exchange:
             # Используем локальную переменную или getattr для проверки текущего режима
@@ -47,14 +47,14 @@ class SignalWorker:
                 mode_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
                 mode_host = 'open-api-vst.bingx.com' if is_sandbox else 'open-api.bingx.com'
 
-                # Безопасно обновляем все URL-адреса в объекте биржи (и синхронном, и асинхронном)
+                # Force update URLs in exchange object (both sync and async)
                 for api_obj in [self.bot.exchange._api, self.bot.exchange._api_async]:
-                    # 1. Устанавливаем hostname
+                    # 1. Set hostname
                     api_obj.hostname = mode_host
-                    # 2. Устанавливаем sandbox флаг (стандарт CCXT)
+                    # 2. Set sandbox flag (CCXT standard)
                     api_obj.set_sandbox_mode(is_sandbox)
                     api_obj.sandbox = is_sandbox
-                    # 3. Принудительно правим словарь urls['api'], поддерживая и строки, и словари
+                    # 3. Force update urls['api'] dictionary/string
                     if 'api' in api_obj.urls:
                         if isinstance(api_obj.urls['api'], dict):
                             for k in api_obj.urls['api'].keys():
@@ -62,31 +62,31 @@ class SignalWorker:
                         else:
                             api_obj.urls['api'] = mode_url
                 
-                logger.info(f"Активный режим: {'SANDBOX/VST' if is_sandbox else 'LIVE/USDT'}")
+                logger.info(f"Active mode: {'SANDBOX/VST' if is_sandbox else 'LIVE/USDT'}")
                 
-                # Настраиваем режим Dry Run самого бота
+                # Update bot dry_run config
                 self.bot.config['dry_run'] = is_dry_run
                 self.bot.exchange._config['dry_run'] = is_dry_run
                 if hasattr(self.bot.exchange, '_dry_run'):
                     self.bot.exchange._dry_run = is_dry_run
                 
-                # Сбрасываем кэш рынков и кошельков
+                # Reset markets and wallets cache
                 self.bot.exchange._markets = {}
                 self.bot.exchange._reload_markets = True
                 if hasattr(self.bot, 'wallets'):
                     self.bot.wallets.update()
-                    # Пересчитываем стартовый капитал под новый режим
+                    # Recalculate start capital for the new mode
                     self.bot.wallets.start_cap = self.bot.wallets.get_total_stake_amount()
                 
-                # Понятные логи
+                # Human-readable logs
                 if is_dry_run:
-                    mode_name = "ИМИТАЦИЯ (DRY RUN - только внутренние расчеты)"
+                    mode_name = "SIMULATION (DRY RUN - internal calculations only)"
                 elif is_sandbox:
-                    mode_name = "ВИРТУАЛЬНАЯ ТОРГОВЛЯ (VST - реальные ордера на демо-счет)"
+                    mode_name = "VIRTUAL TRADING (VST - real orders on demo account)"
                 else:
-                    mode_name = "РЕАЛЬНАЯ ТОРГОВЛЯ (USDT - настоящие деньги)"
+                    mode_name = "REAL TRADING (USDT - real money)"
                 
-                logger.info(f"ВНИМАНИЕ! Режим изменен на: {mode_name}")
+                logger.info(f"ATTENTION! Mode changed to: {mode_name}")
 
         if self.bot and self.bot.state != State.RUNNING:
             # Если бот не в RUNNING, не забираем новые сигналы
@@ -323,15 +323,16 @@ class SignalWorker:
                     last_sync = now
                 
                 # Диагностика раз в 2 минуты (или чаще если надо)
+                # Diagnostics every 2 minutes
                 if now - last_diag > 120:
                     self._run_diagnostic()
                     last_diag = now
 
             except Exception:
-                logger.exception("SignalWorker столкнулся с ошибкой в основном цикле")
+                logger.error("SignalWorker encountered an error in main loop")
             
             self._stop_event.wait(self.sleep_interval)
-        logger.info("SignalWorker остановлен")
+        logger.info("SignalWorker stopped")
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():

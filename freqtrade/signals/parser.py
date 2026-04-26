@@ -25,14 +25,14 @@ class SignalEvent:
     stop: Optional[float] = None
     leverage: Optional[int] = None
 
-# Регулярные выражения для входа
-# Ожидается:
-# LONG или SHORT
+# Entry regex patterns
+# Expected:
+# LONG or SHORT
 # Монета: DOGE
-# Вход: 0.150 - 0.155 (или одно число)
+# Вход: 0.150 - 0.155 (or single number)
 # Цель: 0.180
 # Стоп: 0.140
-# Плечо: 10x (опционально)
+# Плечо: 10x (optional)
 _ENTRY_SIDE_PATTERN = re.compile(r"^.*?(LONG|SHORT)\s*$", re.IGNORECASE | re.MULTILINE)
 _ENTRY_SYMBOL_PATTERN = re.compile(r"^.*?Монета:\s*([A-Za-z0-9]+)\s*$", re.IGNORECASE | re.MULTILINE)
 _ENTRY_PRICE_PATTERN = re.compile(r"^.*?Вход:\s*(?:от\s*)?([\d\.]+)(?:\s*(?:-|до)\s*([\d\.]+))?\s*$", re.IGNORECASE | re.MULTILINE)
@@ -40,15 +40,15 @@ _ENTRY_TARGET_PATTERN = re.compile(r"^.*?Цель:\s*([\d\.]+)\s*$", re.IGNORECA
 _ENTRY_STOP_PATTERN = re.compile(r"^.*?Стоп:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
 _ENTRY_LEVERAGE_PATTERN = re.compile(r"^.*?Плечо:\s*(?:\d+-)?(\d+)[xх]?\s*$", re.IGNORECASE | re.MULTILINE)
 
-# Регулярные выражения для выхода
-# Ожидается: DOGE - тейк ✅ или SUI - стоп
+# Exit regex patterns
+# Expected: DOGE - тейк ✅ or SUI - стоп
 _EXIT_TAKE_PATTERN = re.compile(r"^\s*([A-Za-z0-9]+)\s*-\s*тейк(?:\s*✅)?\s*$", re.IGNORECASE)
 _EXIT_STOP_PATTERN = re.compile(r"^\s*([A-Za-z0-9]+)\s*-\s*стоп\s*$", re.IGNORECASE)
 
 def parse_signal_text(text: str) -> Optional[SignalEvent]:
     """
-    Парсит сырой текст из Telegram и возвращает SignalEvent.
-    Возвращает None, если сообщение не распознано.
+    Parses raw Telegram text into a SignalEvent.
+    Returns None if message is not recognized.
     """
     if not text:
         return None
@@ -82,7 +82,7 @@ def parse_signal_text(text: str) -> Optional[SignalEvent]:
         leverage_match = _ENTRY_LEVERAGE_PATTERN.search(text)
         
         if not (symbol_match and price_match and target_match and stop_match):
-            logger.warning(f"Неполный формат сигнала на вход. Не удалось найти все обязательные поля:\n{text}")
+            logger.warning(f"Incomplete entry signal format. Mandatory fields missing:\n{text}")
             return None
             
         symbol = symbol_match.group(1).upper()
@@ -109,5 +109,5 @@ def parse_signal_text(text: str) -> Optional[SignalEvent]:
             leverage=leverage
         )
         
-    logger.debug(f"Сообщение проигнорировано (не распознано как сигнал): {text}")
+    logger.debug(f"Message ignored (not recognized as signal): {text}")
     return None

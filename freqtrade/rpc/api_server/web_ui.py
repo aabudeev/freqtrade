@@ -84,12 +84,7 @@ async def index_html(rest_of_path: str):
                     const link = document.createElement('a');
                     link.id = 'nav-signals';
                     link.href = '/signals_dashboard';
-                    link.target = '_blank';
-                    // Копируем классы у соседа, чтобы выглядело нативно
-                    link.className = item.className;
-                    link.style.textDecoration = 'none';
-                    link.style.color = 'inherit';
-                    link.style.marginLeft = '10px';
+                    link.className = 'v-btn v-btn--flat v-btn--text theme--dark v-size--default';
                     link.innerHTML = '<span class="v-btn__content">Signals</span>';
                     
                     item.parentNode.insertBefore(link, item.nextSibling);

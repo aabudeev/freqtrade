@@ -1,12 +1,12 @@
 """
-Legacy: parse **post-line** channel exports (сторонний экспортёр, не MTProto).
+Legacy: parse **post-line** channel exports (third-party exporter, not MTProto).
 
-Основной путь для форка — :mod:`freqtrade.signals.telethon_message` (JSON ``Message.to_dict()``).
+Main entry point for the fork is :mod:`freqtrade.signals.telethon_message` (JSON ``Message.to_dict()``).
 
 Export format (one message per line)::
     DD-MM-YYYY HH:MM:SS | <meta> | <meta> | <message text>
 
-First line may be a header: ``Период: ...`` — skipped.
+First line may be a header: ``Period: ...`` — skipped.
 """
 from __future__ import annotations
 

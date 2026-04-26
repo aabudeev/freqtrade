@@ -277,28 +277,32 @@
                         <option value="20">20 на стр.</option>
                         <option value="50">50 на стр.</option>
                         <option value="100">100 на стр.</option>
+                        <option value="10">10 per page</option>
+                        <option value="20">20 per page</option>
+                        <option value="50">50 per page</option>
+                        <option value="100">100 per page</option>
                     </select>
                     <div class="pagination-pages" id="pagination-pages">
                         <!-- Pages here -->
                     </div>
                 </div>
-                <span id="last-update">Обновление: --</span>
-                <button onclick="openSettings()">Настройки</button>
+                <span id="last-update">Update: --</span>
+                <button onclick="openSettings()">Settings</button>
             </div>
         </header>
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th>Тикер</th>
-                        <th>Тип</th>
-                        <th>Плечо</th>
-                        <th>Диапазон входа</th>
-                        <th>Тейк-профит</th>
-                        <th>Стоп-лосс</th>
-                        <th>Время</th>
-                        <th>Статус</th>
-                        <th>График</th>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th>Leverage</th>
+                        <th>Entry Range</th>
+                        <th>Take Profit</th>
+                        <th>Stop Loss</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                        <th>Chart</th>
                     </tr>
                 </thead>
                 <tbody id="signals-body">
@@ -310,43 +314,43 @@
 
     <div id="settings-modal">
         <div class="settings-content">
-            <h3>Настройки Риска</h3>
+            <h3>Risk Settings</h3>
             <div class="form-group">
-                <label>Режим входа</label>
+                <label>Stake Mode</label>
                 <select id="set_stake_mode" onchange="toggleStakeMode()">
-                    <option value="fixed">Фиксированная сумма</option>
-                    <option value="percentage">% от депо</option>
+                    <option value="fixed">Fixed Amount</option>
+                    <option value="percentage">Percentage of Balance</option>
                 </select>
             </div>
             <div class="form-group" id="group_fixed">
-                <label>Сумма ($)</label>
+                <label>Amount ($)</label>
                 <input type="number" id="set_stake_fixed_amount" value="10" step="1">
             </div>
             <div class="form-group" id="group_perc" style="display:none">
-                <label>Процент (%)</label>
+                <label>Percentage (%)</label>
                 <input type="number" id="set_stake_percentage" value="3" step="0.1">
             </div>
             <div class="form-group">
-                <label>Плечо по умолчанию (если не указано)</label>
+                <label>Default Leverage</label>
                 <input type="number" id="set_default_leverage" value="50" step="1">
             </div>
             <div class="form-group">
-                <label>Стратегия входа</label>
+                <label>Entry Strategy</label>
                 <select id="set_entry_mode">
-                    <option value="single">Один вход (Single)</option>
-                    <option value="dca">Доборы (DCA)</option>
+                    <option value="single">Single Entry</option>
+                    <option value="dca">DCA (Dollar Cost Averaging)</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>Тип счета</label>
+                <label>Account Type</label>
                 <select id="set_exchange_mode">
-                    <option value="dry_run">Имитация торговли (DRY RUN)</option>
-                    <option value="vst">Виртуальная торговля (VST)</option>
-                    <option value="live">Реальная торговля (USDT)</option>
+                    <option value="dry_run">Simulation (DRY RUN)</option>
+                    <option value="vst">Virtual Trading (VST)</option>
+                    <option value="live">Real Trading (USDT)</option>
                 </select>
             </div>
-            <button class="btn-primary" onclick="saveSettings()">Сохранить</button>
-            <button onclick="closeSettings()" style="width: 100%; margin-top: 0.5rem; background: transparent; border: 1px solid var(--border-color); color: #fff;">Отмена</button>
+            <button class="btn-primary" onclick="saveSettings()">Save</button>
+            <button onclick="closeSettings()" style="width: 100%; margin-top: 0.5rem; background: transparent; border: 1px solid var(--border-color); color: #fff;">Cancel</button>
         </div>
     </div>
 
@@ -355,16 +359,16 @@
             <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
                 <h3 id="chart-title" style="margin: 0; white-space: nowrap;">Chart</h3>
                 <div id="tf-buttons" style="display: flex; gap: 4px;">
-                    <button class="tf-btn" data-tf="1m" onclick="changeTimeframe('1m')">1м</button>
-                    <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5м</button>
-                    <button class="tf-btn active" data-tf="15m" onclick="changeTimeframe('15m')">15м</button>
-                    <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1ч</button>
-                    <button class="tf-btn" data-tf="4h" onclick="changeTimeframe('4h')">4ч</button>
-                    <button class="tf-btn" data-tf="1d" onclick="changeTimeframe('1d')">1д</button>
-                    <button class="tf-btn" data-tf="1w" onclick="changeTimeframe('1w')">1н</button>
-                    <button class="tf-btn" data-tf="1M" onclick="changeTimeframe('1M')">1М</button>
+                    <button class="tf-btn" data-tf="1m" onclick="changeTimeframe('1m')">1m</button>
+                    <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5m</button>
+                    <button class="tf-btn active" data-tf="15m" onclick="changeTimeframe('15m')">15m</button>
+                    <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1h</button>
+                    <button class="tf-btn" data-tf="4h" onclick="changeTimeframe('4h')">4h</button>
+                    <button class="tf-btn" data-tf="1d" onclick="changeTimeframe('1d')">1d</button>
+                    <button class="tf-btn" data-tf="1w" onclick="changeTimeframe('1w')">1w</button>
+                    <button class="tf-btn" data-tf="1M" onclick="changeTimeframe('1M')">1M</button>
                 </div>
-                <button onclick="closeChart()" style="background: var(--short-color); border: none; white-space: nowrap;">Закрыть</button>
+                <button onclick="closeChart()" style="background: var(--short-color); border: none; white-space: nowrap;">Close</button>
             </div>
             <div id="tvchart" style="width: 100%; height: 60vh;"></div>
         </div>
@@ -508,6 +512,11 @@
                             if (parsed && parsed.accessToken) {
                                 ftToken = parsed.accessToken;
                                 ftRefreshToken = parsed.refreshToken || '';
+                                const mapping = {
+                                    'vst': 'Virtual (VST)',
+                                    'live': 'Real (USDT)',
+                                    'dry_run': 'Simulation (DryRun)'
+                                };
                                 break;
                             }
                             // Vuex fallback

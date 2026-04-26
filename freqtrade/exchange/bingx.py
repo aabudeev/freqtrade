@@ -153,10 +153,10 @@ class Bingx(Exchange):
         balances = super().get_balances(params)
         is_vst = getattr(self._api, 'sandbox', False)
         
-        # ОТЛАДКА: выводим в консоль что реально пришло
+        # DEBUG: Log raw data and target URL
         api_url = self._api.urls.get('api', {})
         active_url = api_url.get('swap', 'unknown') if isinstance(api_url, dict) else api_url
-        keys = list(balances.keys())[:10] # первые 10 ключей
+        keys = list(balances.keys())[:10] # first 10 keys
         logger.info(f"BALANCES DEBUG (is_vst={is_vst}, URL={active_url}): keys found: {keys}")
         if "USDT" in balances:
             logger.info(f"USDT Balance: {balances['USDT']['total']}")
