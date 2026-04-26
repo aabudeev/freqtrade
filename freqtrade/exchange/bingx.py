@@ -154,7 +154,8 @@ class Bingx(Exchange):
         is_vst = getattr(self._api, 'sandbox', False)
         
         # ОТЛАДКА: выводим в консоль что реально пришло
-        active_url = self._api.urls.get('api', 'unknown')
+        api_url = self._api.urls.get('api', {})
+        active_url = api_url.get('swap', 'unknown') if isinstance(api_url, dict) else api_url
         keys = list(balances.keys())[:10] # первые 10 ключей
         logger.info(f"BALANCES DEBUG (is_vst={is_vst}, URL={active_url}): keys found: {keys}")
         if "USDT" in balances:

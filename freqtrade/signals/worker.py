@@ -43,18 +43,31 @@ class SignalWorker:
             
             # Если любой из флагов не совпадает с желаемым
             if current_api_sandbox != is_sandbox or current_dry_run != is_dry_run:
-                # Принудительно меняем базовый URL (для BingX это строка)
+                # Принудительно меняем базовый URL (для BingX это словарь типов)
                 base_url = 'https://open-api-vst.bingx.com/openApi' if is_sandbox else 'https://open-api.bingx.com/openApi'
-                self.bot.exchange._api.urls['api'] = base_url
-                self.bot.exchange._api_async.urls['api'] = base_url
-                
+                api_dict = {
+                    'fund': base_url,
+                    'spot': base_url,
+                    'swap': base_url,
+                    'contract': base_url,
+                    'wallets': base_url,
+                    'user': base_url,
+                    'subAccount': base_url,
+                    'account': base_url,
+                    'copyTrading': base_url,
+                    'cswap': base_url,
+                    'api': base_url
+                }
+                self.bot.exchange._api.urls['api'] = api_dict
+                self.bot.exchange._api_async.urls['api'] = api_dict
+
                 # Настраиваем биржу
                 self.bot.exchange._api.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api_async.set_sandbox_mode(is_sandbox)
                 self.bot.exchange._api.sandbox = is_sandbox
                 self.bot.exchange._api_async.sandbox = is_sandbox
                 
-                logger.info(f"Активный URL биржи: {self.bot.exchange._api.urls['api']}")
+                logger.info(f"Активный режим: {'SANDBOX/VST' if is_sandbox else 'LIVE/USDT'}")
                 
                 # Настраиваем режим Dry Run самого бота
                 self.bot.config['dry_run'] = is_dry_run
