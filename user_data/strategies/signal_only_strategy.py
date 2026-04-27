@@ -43,7 +43,7 @@ class SignalOnlyStrategy(IStrategy):
     # SL-Watchdog (C.4.4): Set to False to check SL on every tick (~5s) instead of just on new candles
     process_only_new_candles = False
     use_exit_signal = False
-    startup_candle_count = 5
+    startup_candle_count = 200
     
     # DCA / Position Adjustment (D.6)
     position_adjustment_enable = True
