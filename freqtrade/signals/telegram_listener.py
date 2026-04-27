@@ -137,20 +137,20 @@ class TelegramSignalsListener:
             self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
             logger.info("Telegram signals listener connected (peer %s)", peer)
 
-        # Sync history (last 50 messages) in case the bot was offline
-        logger.info("Loading signal history (last 50 messages)...")
-        async for msg in self._client.iter_messages(entity, limit=50):
-            try:
-                if not msg:
-                    continue
-                d = msg.to_dict()
-                ev = message_dict_to_ingest_event(d)
-                if ev and self._store.enqueue(ev):
-                    logger.info("Signals queue (history): enqueued %s", ev.idempotency_key)
-            except Exception:
-                logger.exception("Error importing message from history")
+            # Sync history (last 50 messages) in case the bot was offline
+            logger.info("Loading signal history (last 50 messages)...")
+            async for msg in self._client.iter_messages(entity, limit=50):
+                try:
+                    if not msg:
+                        continue
+                    d = msg.to_dict()
+                    ev = message_dict_to_ingest_event(d)
+                    if ev and self._store.enqueue(ev):
+                        logger.info("Signals queue (history): enqueued %s", ev.idempotency_key)
+                except Exception:
+                    logger.exception("Error importing message from history")
 
-        await self._client.run_until_disconnected()
+            await self._client.run_until_disconnected()
         finally:
             if self._client:
                 try:
