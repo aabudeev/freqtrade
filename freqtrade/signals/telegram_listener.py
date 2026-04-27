@@ -44,7 +44,7 @@ def _session_path() -> str:
 class TelegramSignalsListener:
     def __init__(self, config: Config) -> None:
         self._config = config
-        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        db_path = config["user_data_dir"] / "signals.db"
         self._store = SignalQueueStore(db_path)
         self._thread: Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

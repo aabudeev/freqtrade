@@ -57,6 +57,16 @@ class SignalOnlyStrategy(IStrategy):
     }
     order_time_in_force = {"entry": "GTC", "exit": "GTC"}
 
+    def leverage(self, pair: str, current_time: datetime, current_rate: float,
+                 proposed_leverage: float, max_leverage: float, side: str,
+                 **kwargs) -> float:
+        """
+        Dynamically set leverage from dashboard settings.
+        """
+        settings = self.signal_store.get_settings()
+        lev = float(settings.get('default_leverage', 50.0))
+        return min(lev, max_leverage)
+
     plot_config = {
         "main_plot": {
             "ema20": {"color": "#e0752f"},
