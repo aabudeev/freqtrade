@@ -134,12 +134,11 @@ class SignalOnlyStrategy(IStrategy):
         settings = self.signal_store.get_settings()
         strategy_mode = settings.get('strategy_mode', 'signal')
         
-        # Log mode occasionally (once per pair per 15 mins to avoid spam)
-        if not hasattr(self, '_last_log'): self._last_log = {}
-        now = datetime.now().timestamp()
-        if now - self._last_log.get(metadata['pair'], 0) > 900:
-            logger.info(f"Strategy mode for {metadata['pair']}: {strategy_mode.upper()}")
-            self._last_log[metadata['pair']] = now
+        # Log immediately on change
+        if not hasattr(self, '_current_mode'): self._current_mode = None
+        if self._current_mode != strategy_mode:
+            logger.info(f"STRATEGY MODE CHANGED TO: {strategy_mode.upper()}")
+            self._current_mode = strategy_mode
         
         dataframe.loc[:, 'enter_long'] = 0
         dataframe.loc[:, 'enter_short'] = 0
