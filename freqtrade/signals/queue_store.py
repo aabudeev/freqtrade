@@ -205,13 +205,13 @@ class SignalQueueStore:
                     settings[key] = val
                 return settings
 
-    def update_settings(self, new_settings: dict) -> None:
+                con.commit()
+
+    def save_setting(self, key: str, value: Any) -> None:
         with self._lock:
             with self._connect() as con:
-                cur = con.cursor()
-                for key, val in new_settings.items():
-                    cur.execute(
-                        "UPDATE settings SET value = ? WHERE key = ?",
-                        (str(val), key)
-                    )
+                con.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                    (key, str(value))
+                )
                 con.commit()

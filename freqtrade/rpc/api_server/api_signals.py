@@ -17,7 +17,7 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
     Возвращает сигналы из базы данных с поддержкой пагинации.
     """
     try:
-        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        db_path = Path("/freqtrade/user_data/signals.db")
         store = SignalQueueStore(db_path)
         
         conn = store._connect()
@@ -61,7 +61,7 @@ def dict_factory(cursor, row):
 @router.get("/signals_settings", tags=["Signals"])
 def get_signals_settings(config: dict = Depends(get_config)) -> Dict[str, Any]:
     try:
-        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        db_path = Path("/freqtrade/user_data/signals.db")
         store = SignalQueueStore(db_path)
         return store.get_settings()
     except Exception as e:
@@ -71,15 +71,14 @@ def get_signals_settings(config: dict = Depends(get_config)) -> Dict[str, Any]:
 @router.post("/signals_settings", tags=["Signals"])
 async def update_signals_settings(request: dict, config: dict = Depends(get_config)) -> Dict[str, Any]:
     try:
-        db_path = config["user_data_dir"] / "signals_queue.sqlite"
+        db_path = Path("/freqtrade/user_data/signals.db")
         store = SignalQueueStore(db_path)
         
-        # Filter only allowed keys (D.5, D.6)
-        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage', 'entry_mode', 'exchange_mode', 'strategy_mode']
-        filtered = {k: v for k, v in request.items() if k in allowed_keys}
+        logger.info(f"API: Updating settings: {request}")
         
-        if filtered:
-            store.update_settings(filtered)
+        # Save all provided keys
+        for k, v in request.items():
+            store.save_setting(k, v)
             
         return {"status": "ok", "settings": store.get_settings()}
     except Exception as e:
