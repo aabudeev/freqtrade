@@ -75,7 +75,7 @@ async def update_signals_settings(request: dict, config: dict = Depends(get_conf
         store = SignalQueueStore(db_path)
         
         # Filter only allowed keys (D.5, D.6)
-        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage', 'entry_mode', 'exchange_mode']
+        allowed_keys = ['stake_mode', 'stake_fixed_amount', 'stake_percentage', 'default_leverage', 'entry_mode', 'exchange_mode', 'strategy_mode']
         filtered = {k: v for k, v in request.items() if k in allowed_keys}
         
         if filtered:

@@ -314,7 +314,15 @@
 
     <div id="settings-modal">
         <div class="settings-content">
-            <h3>Risk Settings</h3>
+            <h3>Strategy Settings</h3>
+            <div class="form-group">
+                <label>Strategies</label>
+                <select id="set_strategy_mode">
+                    <option value="signal">Signal</option>
+                    <option value="indicator">Indicator</option>
+                    <option value="hybrid">Signal + Indicator</option>
+                </select>
+            </div>
             <div class="form-group">
                 <label>Stake Mode</label>
                 <select id="set_stake_mode" onchange="toggleStakeMode()">
@@ -585,6 +593,7 @@
                     document.getElementById('set_default_leverage').value = data.default_leverage || 50;
                     document.getElementById('set_entry_mode').value = data.entry_mode || 'single';
                     document.getElementById('set_exchange_mode').value = data.exchange_mode || 'vst';
+                    document.getElementById('set_strategy_mode').value = data.strategy_mode || 'signal';
                     toggleStakeMode();
                 }
             } catch (e) { console.error(e); }
@@ -602,7 +611,8 @@
                 stake_percentage: parseFloat(document.getElementById('set_stake_percentage').value),
                 default_leverage: parseInt(document.getElementById('set_default_leverage').value),
                 entry_mode: document.getElementById('set_entry_mode').value,
-                exchange_mode: document.getElementById('set_exchange_mode').value
+                exchange_mode: document.getElementById('set_exchange_mode').value,
+                strategy_mode: document.getElementById('set_strategy_mode').value
             };
             try {
                 await apiFetch('/api/v1/signals_settings', {

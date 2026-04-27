@@ -3,9 +3,15 @@
 
 from pandas import DataFrame
 from datetime import datetime
+import logging
+import pandas_ta as ta
 
-from freqtrade.strategy import IStrategy
+logger = logging.getLogger(__name__)
+
+from freqtrade.strategy import IStrategy, merge_informative_pair
 from freqtrade.persistence import Trade
+from freqtrade.signals.queue_store import SignalQueueStore
+from freqtrade.signals.parser import parse_signal_text
 
 
 class SignalOnlyStrategy(IStrategy):
@@ -14,6 +20,10 @@ class SignalOnlyStrategy(IStrategy):
     Does not generate entry signals. Entries are made via /forcelong, /forceshort, or SignalWorker.
     Exits: minimal_roi, stoploss, /forceexit, and custom SL/TP logic.
     """
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+        self.signal_store = SignalQueueStore("/freqtrade/user_data/signals.db")
 
     INTERFACE_VERSION = 3
 
@@ -50,25 +60,127 @@ class SignalOnlyStrategy(IStrategy):
         "main_plot": {
             "ema20": {"color": "#e0752f"},
             "ema50": {"color": "#2196f3"},
+            "bb_lowerband": {"color": "rgba(255,255,255,0.1)", "fill_to": "bb_upperband"},
+            "bb_middleband": {"color": "rgba(255,255,255,0.2)"},
+            "supertrend": {"color": "#ffff00"},
         },
         "subplots": {
             "RSI": {
                 "rsi": {"color": "#9c27b0"},
+            },
+            "MACD": {
+                "macd": {"color": "#2196f3"},
+                "macdsignal": {"color": "#ff9800"},
             }
         },
     }
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        import talib.abstract as ta
-        dataframe['ema20'] = ta.EMA(dataframe, timeperiod=20)
-        dataframe['ema50'] = ta.EMA(dataframe, timeperiod=50)
-        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
+        # 1. EMAs (Trend)
+        dataframe['ema20'] = ta.ema(dataframe['close'], length=20)
+        dataframe['ema50'] = ta.ema(dataframe['close'], length=50)
+        dataframe['ema200'] = ta.ema(dataframe['close'], length=200)
+
+        # 2. RSI (Momentum)
+        dataframe['rsi'] = ta.rsi(dataframe['close'], length=14)
+
+        # 3. Bollinger Bands (Volatility)
+        bb = ta.bbands(dataframe['close'], length=20, std=2)
+        dataframe['bb_lowerband'] = bb['BBL_20_2.0']
+        dataframe['bb_middleband'] = bb['BBM_20_2.0']
+        dataframe['bb_upperband'] = bb['BBU_20_2.0']
+
+        # 4. MACD (Confirmation)
+        macd = ta.macd(dataframe['close'], fast=12, slow=26, signal=9)
+        dataframe['macd'] = macd['MACD_12_26_9']
+        dataframe['macdsignal'] = macd['MACDs_12_26_9']
+
+        # 5. SuperTrend (Volatility Trend)
+        st = ta.supertrend(dataframe['high'], dataframe['low'], dataframe['close'], length=10, multiplier=3)
+        # Use the trend column (1 for long, -1 for short)
+        dataframe['supertrend'] = st['SUPERT_10_3.0']
+        dataframe['supertrend_direction'] = st['SUPERTd_10_3.0']
+
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[:, "enter_long"] = 0
-        dataframe.loc[:, "enter_short"] = 0
+        # Get strategy mode from DB settings to allow dynamic switching
+        settings = self.signal_store.get_settings()
+        strategy_mode = settings.get('strategy_mode', 'signal')
+        
+        dataframe.loc[:, 'enter_long'] = 0
+        dataframe.loc[:, 'enter_short'] = 0
+
+        # 1. INDICATOR MODE (Automated TA)
+        if strategy_mode in ['indicator', 'hybrid']:
+            # Strong Bullish Conditions:
+            # - Price above EMA50
+            # - EMA20 above EMA50
+            # - SuperTrend is Green (1)
+            # - RSI is not overbought (< 65)
+            # - Price is near or below BB middle band (pullback)
+            dataframe.loc[
+                (dataframe['close'] > dataframe['ema50']) &
+                (dataframe['ema20'] > dataframe['ema50']) &
+                (dataframe['supertrend_direction'] == 1) &
+                (dataframe['rsi'] > 45) & (dataframe['rsi'] < 65) &
+                (dataframe['close'] < dataframe['bb_middleband'] * 1.01),
+                'enter_long'
+            ] = 1
+            
+            # Strong Bearish Conditions:
+            dataframe.loc[
+                (dataframe['close'] < dataframe['ema50']) &
+                (dataframe['ema20'] < dataframe['ema50']) &
+                (dataframe['supertrend_direction'] == -1) &
+                (dataframe['rsi'] < 55) & (dataframe['rsi'] > 35) &
+                (dataframe['close'] > dataframe['bb_middleband'] * 0.99),
+                'enter_short'
+            ] = 1
+
+        # 2. SIGNAL / HYBRID MODE
+        # Check for waiting signals from SignalWorker
+        waiting = self.signal_store.get_waiting_signals()
+        for sig in waiting:
+            symbol = sig.get('symbol')
+            # Handle symbol matching (e.g. BTC/USDT:USDT)
+            if symbol and (symbol == metadata['pair'] or symbol.split(':')[0] == metadata['pair'].split(':')[0]):
+                event = parse_signal_text(sig['text'])
+                if event:
+                    is_long = (event.side.name == 'LONG')
+                    is_short = (event.side.name == 'SHORT')
+                    
+                    if strategy_mode == 'hybrid':
+                        # Hybrid logic: Signal AND indicators must match
+                        # We reuse the logic from Indicator mode
+                        if is_long and dataframe['enter_long'].iloc[-1] == 1:
+                            dataframe.loc[dataframe.index[-1], 'enter_long'] = 1
+                            # Attach signal metadata to the dataframe for confirm_trade_entry
+                            dataframe.loc[dataframe.index[-1], 'enter_tag'] = f"hybrid_{sig['idempotency_key']}"
+                        elif is_short and dataframe['enter_short'].iloc[-1] == 1:
+                            dataframe.loc[dataframe.index[-1], 'enter_short'] = 1
+                            dataframe.loc[dataframe.index[-1], 'enter_tag'] = f"hybrid_{sig['idempotency_key']}"
+                        else:
+                            # Indicator doesn't confirm the signal
+                            pass
+                    else:
+                        # Fallback (should not happen if mode is correctly managed)
+                        pass
+
         return dataframe
+
+    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
+                            time_in_force: str, current_time: datetime, entry_tag: str | None,
+                            side: str, **kwargs) -> bool:
+        """
+        Called right before entering a trade.
+        We use this to mark hybrid signals as 'sent'.
+        """
+        if entry_tag and entry_tag.startswith("hybrid_"):
+            key = entry_tag.replace("hybrid_", "")
+            self.signal_store.mark_status(key, "sent")
+            logger.info(f"Hybrid trade confirmed for {pair}. Signal {key} marked as sent.")
+        return True
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[:, "exit_long"] = 0

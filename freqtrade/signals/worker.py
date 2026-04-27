@@ -179,6 +179,18 @@ class SignalWorker:
                             except Exception:
                                 pass
 
+                            strategy_mode = settings.get('strategy_mode', 'signal')
+                            
+                            if strategy_mode == 'hybrid':
+                                logger.info(f"Hybrid mode active. Marking signal {key} for {event.symbol} as waiting_ta.")
+                                self.store.mark_status(key, "waiting_ta")
+                                if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                    self.bot.rpc.send_msg({
+                                        'type': RPCMessageType.STATUS,
+                                        'status': f"⏳ Signal {event.symbol} is waiting for TA confirmation (Hybrid mode)"
+                                    })
+                                continue
+
                             trade = self.bot.rpc._rpc._rpc_force_entry(
                                 pair=event.symbol,
                                 price=price,

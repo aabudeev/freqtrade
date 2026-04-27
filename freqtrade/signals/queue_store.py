@@ -40,6 +40,7 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_percentage', '3');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('default_leverage', '50');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('entry_mode', 'single');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('exchange_mode', 'vst');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('strategy_mode', 'signal');
 """
 
 
@@ -166,6 +167,20 @@ class SignalQueueStore:
                     (status, error_message, now, idempotency_key)
                 )
                 con.commit()
+
+
+    def get_waiting_signals(self) -> list[dict]:
+        """
+        Retrieves all records with status 'waiting_ta'.
+        Used by strategy to find signals pending indicator confirmation.
+        """
+        with self._lock:
+            with self._connect() as con:
+                con.row_factory = sqlite3.Row
+                rows = con.execute(
+                    "SELECT * FROM ingest_queue WHERE status = 'waiting_ta' ORDER BY created_at DESC"
+                ).fetchall()
+                return [dict(r) for r in rows]
 
 
     def get_settings(self) -> dict:

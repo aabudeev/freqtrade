@@ -21,4 +21,4 @@ RUN pip install --user --no-cache-dir --upgrade . \
   && cp -a /tmp/frequi-ui/. "$SITE_UI/"
 
 WORKDIR /freqtrade
-RUN pip install --user --no-cache-dir socksio "PySocks>=1.7.1" "aiohttp-socks>=0.7.1"
+RUN pip install --user --no-cache-dir socksio "PySocks>=1.7.1" "aiohttp-socks>=0.7.1" pandas-ta
