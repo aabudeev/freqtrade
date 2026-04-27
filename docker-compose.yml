@@ -42,6 +42,10 @@ services:
       - SignalOnlyStrategy
     networks:
       - shared_network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
 networks:
   shared_network:

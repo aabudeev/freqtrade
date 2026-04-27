@@ -110,32 +110,32 @@ class TelegramSignalsListener:
 
         proxy = telethon_proxy_from_env()
         self._client = TelegramClient(session_path, api_id, api_hash, proxy=proxy)
-        await self._client.connect()
-        if not await self._client.is_user_authorized():
-            logger.error("Telegram signals listener: session not authorized")
-            await self._client.disconnect()
-            return
+        
+        try:
+            await self._client.connect()
+            if not await self._client.is_user_authorized():
+                logger.error("Telegram signals listener: session not authorized")
+                return
 
-        ch = os.environ["TELEGRAM_SIGNALS_CHANNEL_ID"].strip()
-        peer = resolve_channel_peer_id(ch)
-        entity = await self._client.get_entity(peer)
+            ch = os.environ["TELEGRAM_SIGNALS_CHANNEL_ID"].strip()
+            peer = resolve_channel_peer_id(ch)
+            entity = await self._client.get_entity(peer)
 
-        async def handler(event) -> None:
-            try:
-                if not event.message:
-                    return
-                d = event.message.to_dict()
-                ev = message_dict_to_ingest_event(d)
-                if ev is None:
-                    return
-                if self._store.enqueue(ev):
-                    logger.info("Signals queue: enqueued %s", ev.idempotency_key)
-            except Exception:
-                logger.exception("Signals queue handler failed")
+            async def handler(event) -> None:
+                try:
+                    if not event.message:
+                        return
+                    d = event.message.to_dict()
+                    ev = message_dict_to_ingest_event(d)
+                    if ev is None:
+                        return
+                    if self._store.enqueue(ev):
+                        logger.info("Signals queue: enqueued %s", ev.idempotency_key)
+                except Exception:
+                    logger.exception("Signals queue handler failed")
 
-        assert self._client is not None
-        self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
-        logger.info("Telegram signals listener connected (peer %s)", peer)
+            self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
+            logger.info("Telegram signals listener connected (peer %s)", peer)
 
         # Sync history (last 50 messages) in case the bot was offline
         logger.info("Loading signal history (last 50 messages)...")
@@ -151,6 +151,13 @@ class TelegramSignalsListener:
                 logger.exception("Error importing message from history")
 
         await self._client.run_until_disconnected()
+        finally:
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+                self._client = None
 
     def shutdown(self) -> None:
         self._running = False
