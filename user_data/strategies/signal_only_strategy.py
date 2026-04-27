@@ -76,6 +76,10 @@ class SignalOnlyStrategy(IStrategy):
     }
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Check if we have enough data
+        if len(dataframe) < 20:
+            return dataframe
+
         # 1. EMAs (Trend)
         dataframe['ema20'] = ta.ema(dataframe['close'], length=20)
         dataframe['ema50'] = ta.ema(dataframe['close'], length=50)
@@ -86,20 +90,23 @@ class SignalOnlyStrategy(IStrategy):
 
         # 3. Bollinger Bands (Volatility)
         bb = ta.bbands(dataframe['close'], length=20, std=2)
-        dataframe['bb_lowerband'] = bb['BBL_20_2.0']
-        dataframe['bb_middleband'] = bb['BBM_20_2.0']
-        dataframe['bb_upperband'] = bb['BBU_20_2.0']
+        if bb is not None and not bb.empty:
+            dataframe['bb_lowerband'] = bb.iloc[:, 0]
+            dataframe['bb_middleband'] = bb.iloc[:, 1]
+            dataframe['bb_upperband'] = bb.iloc[:, 2]
 
         # 4. MACD (Confirmation)
         macd = ta.macd(dataframe['close'], fast=12, slow=26, signal=9)
-        dataframe['macd'] = macd['MACD_12_26_9']
-        dataframe['macdsignal'] = macd['MACDs_12_26_9']
+        if macd is not None and not macd.empty:
+            dataframe['macd'] = macd.iloc[:, 0]
+            dataframe['macdsignal'] = macd.iloc[:, 2] # Usually index 2 is signal
 
         # 5. SuperTrend (Volatility Trend)
         st = ta.supertrend(dataframe['high'], dataframe['low'], dataframe['close'], length=10, multiplier=3)
-        # Use the trend column (1 for long, -1 for short)
-        dataframe['supertrend'] = st['SUPERT_10_3.0']
-        dataframe['supertrend_direction'] = st['SUPERTd_10_3.0']
+        if st is not None and not st.empty:
+            # Position 0 is SuperTrend value, Position 1 is Direction (1 or -1)
+            dataframe['supertrend'] = st.iloc[:, 0]
+            dataframe['supertrend_direction'] = st.iloc[:, 1]
 
         return dataframe
 
