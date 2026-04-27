@@ -231,7 +231,7 @@ class SignalOnlyStrategy(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
-        # Get stop-loss price from signal custom data
+        # 1. Try to get stop-loss price from signal custom data (for Signal/Hybrid modes)
         signal_sl = trade.get_custom_data("signal_sl")
         if signal_sl is not None:
             sl_price = float(signal_sl)
@@ -242,8 +242,13 @@ class SignalOnlyStrategy(IStrategy):
                 if sl_price > current_rate:
                     return 1 - (sl_price / current_rate)
         
-        # Fallback to default stoploss if not specified
-        return self.stoploss
+        # 2. Indicator Mode / Fallback: Calculate safety SL based on leverage
+        # Liquidation happens at ~100%/leverage. We set SL at 80% of that distance.
+        lev = trade.leverage if trade.leverage else 1.0
+        # safety_sl is the percentage of price drop (e.g. 0.015 for 1.5%)
+        safety_sl = (0.8 / lev)
+        
+        return -safety_sl
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:
