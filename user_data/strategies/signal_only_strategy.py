@@ -40,7 +40,7 @@ class SignalOnlyStrategy(IStrategy):
     trailing_only_offset_is_reached = True
 
     timeframe = "5m"
-    # SL-Watchdog (C.4.4): Set to False to check SL on every tick (~5s) instead of just on new candles
+    use_custom_stoploss = True
     process_only_new_candles = False
     use_exit_signal = False
     startup_candle_count = 200
