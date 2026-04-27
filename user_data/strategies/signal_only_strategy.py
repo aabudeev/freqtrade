@@ -5,6 +5,7 @@ from pandas import DataFrame
 from datetime import datetime
 import logging
 import pandas_ta as ta
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,8 @@ class SignalOnlyStrategy(IStrategy):
             "bb_lowerband": {"color": "rgba(255,255,255,0.1)", "fill_to": "bb_upperband"},
             "bb_middleband": {"color": "rgba(255,255,255,0.2)"},
             "supertrend": {"color": "#ffff00"},
+            "order_block_low": {"color": "#00ff00", "fill_to": "order_block_high"},
+            "order_block_high": {"color": "rgba(0,255,0,0.1)"},
         },
         "subplots": {
             "RSI": {
@@ -104,9 +107,25 @@ class SignalOnlyStrategy(IStrategy):
         # 5. SuperTrend (Volatility Trend)
         st = ta.supertrend(dataframe['high'], dataframe['low'], dataframe['close'], length=10, multiplier=3)
         if st is not None and not st.empty:
-            # Position 0 is SuperTrend value, Position 1 is Direction (1 or -1)
             dataframe['supertrend'] = st.iloc[:, 0]
             dataframe['supertrend_direction'] = st.iloc[:, 1]
+
+        # 6. Order Blocks (SMC Lite - Support/Resistance Zones)
+        # We find pivots (local high/low) and carry them forward
+        dataframe['order_block_low'] = np.nan
+        dataframe['order_block_high'] = np.nan
+        
+        # Simple pivot detection (window of 5 candles)
+        for i in range(5, len(dataframe)):
+            # Bullish OB (Demand): a low pivot followed by a strong move up
+            if dataframe['low'].iloc[i-3] == dataframe['low'].iloc[i-5:i].min():
+                dataframe.loc[dataframe.index[i:], 'order_block_low'] = dataframe['low'].iloc[i-3]
+                dataframe.loc[dataframe.index[i:], 'order_block_high'] = dataframe['high'].iloc[i-3]
+                
+            # Bearish OB (Supply): a high pivot followed by a strong move down
+            if dataframe['high'].iloc[i-3] == dataframe['high'].iloc[i-5:i].max():
+                dataframe.loc[dataframe.index[i:], 'order_block_supply_high'] = dataframe['high'].iloc[i-3]
+                dataframe.loc[dataframe.index[i:], 'order_block_supply_low'] = dataframe['low'].iloc[i-3]
 
         return dataframe
 
@@ -122,26 +141,26 @@ class SignalOnlyStrategy(IStrategy):
         if strategy_mode in ['indicator', 'hybrid']:
             # Strong Bullish Conditions:
             # - Price above EMA50
-            # - EMA20 above EMA50
             # - SuperTrend is Green (1)
-            # - RSI is not overbought (< 65)
-            # - Price is near or below BB middle band (pullback)
+            # - RSI is in healthy range (45-65)
+            # - Price is INSIDE or touching a Bullish Order Block (Demand zone)
             dataframe.loc[
                 (dataframe['close'] > dataframe['ema50']) &
-                (dataframe['ema20'] > dataframe['ema50']) &
                 (dataframe['supertrend_direction'] == 1) &
-                (dataframe['rsi'] > 45) & (dataframe['rsi'] < 65) &
-                (dataframe['close'] < dataframe['bb_middleband'] * 1.01),
+                (dataframe['rsi'] > 40) & (dataframe['rsi'] < 70) &
+                (dataframe['close'] <= dataframe['order_block_high']) &
+                (dataframe['close'] >= dataframe['order_block_low']),
                 'enter_long'
             ] = 1
             
             # Strong Bearish Conditions:
             dataframe.loc[
                 (dataframe['close'] < dataframe['ema50']) &
-                (dataframe['ema20'] < dataframe['ema50']) &
                 (dataframe['supertrend_direction'] == -1) &
-                (dataframe['rsi'] < 55) & (dataframe['rsi'] > 35) &
-                (dataframe['close'] > dataframe['bb_middleband'] * 0.99),
+                (dataframe['rsi'] < 60) & (dataframe['rsi'] > 30) &
+                (dataframe.get('order_block_supply_high') is not None) &
+                (dataframe['close'] >= dataframe.get('order_block_supply_low', 0)) &
+                (dataframe['close'] <= dataframe.get('order_block_supply_high', 0)),
                 'enter_short'
             ] = 1
 
