@@ -63,7 +63,7 @@ class SignalQueueStore:
                 import re
                 for row in rows:
                     key, text = row
-                    m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', text, re.I)
+                    m = re.search(r'(?:Монета|Coin|Pair|Ticker):\s*([A-Z0-9/:-]+)', text, re.I)
                     if m:
                         sym = m.group(1).strip().upper()
                         con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (sym, key))
@@ -85,7 +85,7 @@ class SignalQueueStore:
                     import re
                     symbol = None
                     # Look for something like BTC/USDT or just BTC in context of "Coin:" or "Pair:"
-                    m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', event.text, re.I)
+                    m = re.search(r'(?:Монета|Coin|Pair|Ticker):\s*([A-Z0-9/:-]+)', event.text, re.I)
                     if m:
                         symbol = m.group(1).strip().upper()
 

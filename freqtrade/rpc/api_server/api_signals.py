@@ -26,12 +26,12 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
             cursor = conn.cursor()
             
             # Получаем общее количество только для РЕАЛЬНЫХ сигналов
-            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue WHERE symbol IS NOT NULL")
+            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue")
             total = cursor.fetchone()["total"]
             
             # Получаем только те записи, которые являются сигналами
             cursor.execute(
-                "SELECT * FROM ingest_queue WHERE symbol IS NOT NULL ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
+                "SELECT * FROM ingest_queue ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
                 (limit, offset)
             )
             rows = cursor.fetchall()
