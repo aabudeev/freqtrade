@@ -31,14 +31,15 @@ services:
       - "8080:8080"
     command:
       - trade
-      - --db-url
-      - sqlite:////freqtrade/user_data/tradesv3.sqlite
-      - --config
-      - /freqtrade/user_data/config.json
-      - --config
-      - /freqtrade/user_data/config_vst.json
-      - --strategy
-      - SignalOnlyStrategy
+      - --config /freqtrade/user_data/config.json
+      - --config /freqtrade/user_data/config_vst.json
+      - --config /freqtrade/user_data/config_signal.json
+      - --strategy SignalOnlyStrategy
+
+      # - --config /freqtrade/user_data/config.json
+      # - --config /freqtrade/user_data/config_vst.json
+      # - --config /freqtrade/user_data/config_indicator.json
+      # - --strategy IndicatorOnlyStrategy
     networks:
       - shared_network
     ulimits:
