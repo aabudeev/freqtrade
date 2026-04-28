@@ -1,0 +1,13 @@
+{
+    "strategy": "SignalOnlyStrategy",
+    "bot_name": "FT_SIGNALS",
+    "stake_amount": 10,
+    "max_open_trades": 10,
+    "dry_run": false,
+    "strategy_settings": {
+        "SignalOnlyStrategy": {
+            "leverage": 25.0
+        }
+    },
+    "db_url": "sqlite:////freqtrade/user_data/trades_signals.sqlite"
+}

@@ -116,6 +116,8 @@ ENV/
 !config_examples/config_full.example.json
 !config_examples/config_kraken.example.json
 !config_examples/config_freqai.example.json
+!user_data/config_signal.json
+!user_data/config_indicator.json
 
 docker-compose-*.yml
 
