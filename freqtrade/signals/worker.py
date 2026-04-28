@@ -203,17 +203,86 @@ class SignalWorker:
                             
                             if trade:
                                 trade.set_custom_data("signal_id", key)
+                                
+                                # --- SL on exchange immediately ---
                                 if event.stop:
-                                    # Force set stop_loss to the exact value from signal
-                                    trade.stop_loss = float(event.stop)
+                                    sl_price = float(event.stop)
+                                    trade.stop_loss = sl_price
                                     trade.set_custom_data("signal_sl", event.stop)
                                     if trade.open_rate:
-                                        trade.stop_loss_pct = (trade.stop_loss / trade.open_rate) - 1
+                                        trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
                                     
+                                    # Fallback: if SL is below liquidation for LONG, adjust
+                                    if trade.liquidation_price and not trade.is_short:
+                                        if sl_price < trade.liquidation_price:
+                                            # Set SL 2% above liquidation as safety margin
+                                            adjusted_sl = trade.liquidation_price * 1.02
+                                            logger.warning(
+                                                f"SL {sl_price} is below liquidation {trade.liquidation_price}. "
+                                                f"Adjusting to {adjusted_sl:.4f}"
+                                            )
+                                            sl_price = adjusted_sl
+                                            trade.stop_loss = sl_price
+                                            trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
+                                    elif trade.liquidation_price and trade.is_short:
+                                        if sl_price > trade.liquidation_price:
+                                            adjusted_sl = trade.liquidation_price * 0.98
+                                            logger.warning(
+                                                f"SL {sl_price} is above liquidation {trade.liquidation_price}. "
+                                                f"Adjusting to {adjusted_sl:.4f}"
+                                            )
+                                            sl_price = adjusted_sl
+                                            trade.stop_loss = sl_price
+                                            trade.stop_loss_pct = 1 - (sl_price / trade.open_rate)
+                                    
+                                    Trade.commit()
+                                    
+                                    # Place SL order on exchange immediately
+                                    try:
+                                        self.bot.create_stoploss_order(trade, sl_price)
+                                        logger.info(f"SL order placed on exchange: {sl_price}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to place SL on exchange: {e}")
+                                        # Fallback: try with adjusted SL (closer to entry)
+                                        try:
+                                            if not trade.is_short:
+                                                fallback_sl = trade.open_rate * 0.83  # -17% from entry
+                                            else:
+                                                fallback_sl = trade.open_rate * 1.17  # +17% from entry
+                                            logger.warning(f"Trying fallback SL: {fallback_sl:.4f}")
+                                            self.bot.create_stoploss_order(trade, fallback_sl)
+                                            trade.stop_loss = fallback_sl
+                                            trade.stop_loss_pct = (fallback_sl / trade.open_rate) - 1 if not trade.is_short else 1 - (fallback_sl / trade.open_rate)
+                                            Trade.commit()
+                                            logger.info(f"Fallback SL placed: {fallback_sl}")
+                                        except Exception as e2:
+                                            logger.error(f"Fallback SL also failed: {e2}")
+                                
+                                # --- TP on exchange immediately ---
                                 if event.target:
                                     trade.set_custom_data("signal_tp", event.target)
+                                    tp_price = float(event.target)
+                                    
+                                    # Place TP as reduce-only limit order
+                                    try:
+                                        exit_side = trade.exit_side  # "sell" for LONG
+                                        tp_order = self.bot.exchange.create_order(
+                                            pair=trade.pair,
+                                            ordertype="limit",
+                                            side=exit_side,
+                                            amount=trade.amount,
+                                            price=tp_price,
+                                            leverage=trade.leverage,
+                                            params={"reduceOnly": True}
+                                        )
+                                        logger.info(
+                                            f"TP order placed on exchange: {tp_price} "
+                                            f"(order_id={tp_order.get('id', '?')})"
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Failed to place TP on exchange: {e}")
                                 
-                                # Commit changes to ensure stop_loss is saved
+                                # Commit all changes
                                 Trade.commit()
                                 
                                 logger.info(f"Created Trade {trade.id} for signal {key}. SL: {event.stop}, TP: {event.target}")
@@ -261,6 +330,7 @@ class SignalWorker:
     def _sync_trade_statuses(self):
         """
         Periodically checks trade statuses in Freqtrade and updates ingest_queue.
+        Also reconciles with exchange positions to detect manual trades or lost records.
         """
         try:
             from freqtrade.persistence import Trade
@@ -273,9 +343,6 @@ class SignalWorker:
                 active_signals = [row[0] for row in cursor.fetchall()]
             finally:
                 conn.close()
-
-            if not active_signals:
-                return
 
             for key in active_signals:
                 tag_full = f"telegram_{key}"
@@ -293,11 +360,187 @@ class SignalWorker:
                             
                         logger.info(f"Trade for signal {key} closed ({trade.exit_reason}). Status: {new_status}")
                         self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
-                    else:
-                        pass
 
         except Exception as e:
             logger.error(f"Error during trade status synchronization: {e}")
+
+    def _reconcile_exchange_positions(self):
+        """
+        Reconcile open positions on the exchange with ingest_queue and Trade table.
+        
+        Handles these cases:
+        0. Signals stuck in 'processing' (bot crashed) → reset to 'pending'
+        1. Signal is 'failed' but position exists on exchange → update to 'open_exchange'
+        2. Position on exchange but no Trade record in Freqtrade → log warning
+        3. Signal is 'sent' but no Trade record and no exchange position → mark as 'failed'
+        """
+        if not self.bot or not self.bot.exchange:
+            return
+
+        try:
+            from freqtrade.persistence import Trade
+            
+            # 0. Recover signals stuck in 'processing' (bot crashed during processing)
+            #    If a signal has been in 'processing' for more than 5 minutes, reset to 'pending'
+            conn = self.store._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.row_factory = None
+                cursor.execute(
+                    "SELECT idempotency_key, updated_at FROM ingest_queue "
+                    "WHERE status = 'processing'"
+                )
+                stuck_rows = cursor.fetchall()
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                for key, updated_at_str in stuck_rows:
+                    try:
+                        updated_at = datetime.fromisoformat(updated_at_str)
+                        stuck_seconds = (now_utc - updated_at).total_seconds()
+                        if stuck_seconds > 300:  # 5 minutes
+                            logger.warning(
+                                f"RECOVER: Signal {key} stuck in 'processing' for "
+                                f"{stuck_seconds:.0f}s. Resetting to 'pending'."
+                            )
+                            self.store.mark_status(key, "pending", f"Recovered from stuck processing ({stuck_seconds:.0f}s)")
+                    except Exception:
+                        pass
+            finally:
+                conn.close()
+
+            # 1. Fetch all open positions from the exchange
+            try:
+                positions = self.bot.exchange.fetch_positions()
+            except Exception as e:
+                logger.warning(f"Failed to fetch positions from exchange: {e}")
+                return
+
+            # Filter to only non-zero positions (actually open)
+            open_positions = [
+                p for p in positions
+                if p.get('contracts') and float(p['contracts']) != 0
+            ]
+
+            if not open_positions:
+                return
+
+            # Build a map: symbol -> position
+            exchange_pos_map = {}
+            for pos in open_positions:
+                sym = pos.get('symbol', '')
+                if sym:
+                    exchange_pos_map[sym] = pos
+
+            # 2. Check 'failed' signals — maybe the position was actually opened
+            conn = self.store._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.row_factory = None
+                cursor.execute(
+                    "SELECT idempotency_key, symbol, text FROM ingest_queue "
+                    "WHERE status = 'failed' AND symbol IS NOT NULL"
+                )
+                failed_signals = cursor.fetchall()
+            finally:
+                conn.close()
+
+            for key, symbol, text in failed_signals:
+                # symbol in DB is like 'ETC', exchange uses 'ETC/USDT:USDT'
+                # Try multiple formats
+                pair_formats = [
+                    f"{symbol}/USDT:USDT",
+                    f"{symbol}/USDT",
+                ]
+                
+                matched_pos = None
+                for fmt in pair_formats:
+                    if fmt in exchange_pos_map:
+                        matched_pos = exchange_pos_map[fmt]
+                        break
+
+                if matched_pos:
+                    contracts = float(matched_pos.get('contracts', 0))
+                    if contracts != 0:
+                        logger.warning(
+                            f"RECONCILE: Signal {key} for {symbol} was 'failed' but position "
+                            f"exists on exchange (contracts={contracts}). Updating status."
+                        )
+                        self.store.mark_status(
+                            key, "open_exchange",
+                            f"Position found on exchange: {contracts} contracts"
+                        )
+                        
+                        # Also check if there's a Trade record — if not, log it
+                        trade = Trade.get_trades([
+                            Trade.is_open.is_(True),
+                            Trade.pair == matched_pos['symbol']
+                        ]).first()
+                        
+                        if not trade:
+                            logger.warning(
+                                f"RECONCILE: No Freqtrade Trade record for open position "
+                                f"{matched_pos['symbol']} on exchange. "
+                                f"Position was likely opened manually or Trade record was lost."
+                            )
+                            if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                self.bot.rpc.send_msg({
+                                    'type': RPCMessageType.WARNING,
+                                    'status': (
+                                        f"⚠️ RECONCILE: Position {matched_pos['symbol']} "
+                                        f"exists on exchange but has no Trade record. "
+                                        f"Signal {key} updated to open_exchange."
+                                    )
+                                })
+
+            # 3. Check 'sent' signals — verify Trade record still exists
+            conn = self.store._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.row_factory = None
+                cursor.execute(
+                    "SELECT idempotency_key, symbol FROM ingest_queue "
+                    "WHERE status = 'sent' AND symbol IS NOT NULL"
+                )
+                sent_signals = cursor.fetchall()
+            finally:
+                conn.close()
+
+            for key, symbol in sent_signals:
+                tag_full = f"telegram_{key}"
+                tag_short = f"telegram_{key[:8]}"
+                trade = Trade.get_trades([Trade.enter_tag.in_([tag_full, tag_short])]).first()
+                
+                if not trade:
+                    # No Trade record — check if position exists on exchange
+                    pair_formats = [
+                        f"{symbol}/USDT:USDT",
+                        f"{symbol}/USDT",
+                    ]
+                    
+                    found_on_exchange = False
+                    for fmt in pair_formats:
+                        if fmt in exchange_pos_map:
+                            pos = exchange_pos_map[fmt]
+                            if float(pos.get('contracts', 0)) != 0:
+                                found_on_exchange = True
+                                logger.warning(
+                                    f"RECONCILE: Signal {key} for {symbol} is 'sent' but no Trade "
+                                    f"record. Position exists on exchange. Keeping status."
+                                )
+                                break
+                    
+                    if not found_on_exchange:
+                        # Neither Trade record nor exchange position — likely failed silently
+                        logger.warning(
+                            f"RECONCILE: Signal {key} for {symbol} is 'sent' but no Trade "
+                            f"record and no position on exchange. Marking as failed."
+                        )
+                        self.store.mark_status(
+                            key, "failed",
+                            "No Trade record and no position on exchange after reconciliation"
+                        )
+
+        except Exception as e:
+            logger.error(f"Error during exchange position reconciliation: {e}")
 
     def _run_diagnostic(self):
         """
@@ -344,6 +587,7 @@ class SignalWorker:
         logger.info("SignalWorker started")
         import time
         last_sync = 0
+        last_reconcile = 0
         last_diag = 0
         while not self._stop_event.is_set():
             try:
@@ -354,6 +598,11 @@ class SignalWorker:
                 if now - last_sync > 30:
                     self._sync_trade_statuses()
                     last_sync = now
+                
+                # Reconcile with exchange positions every 60 seconds
+                if now - last_reconcile > 60:
+                    self._reconcile_exchange_positions()
+                    last_reconcile = now
                 
                 # Diagnostics every 2 minutes
                 if now - last_diag > 120:

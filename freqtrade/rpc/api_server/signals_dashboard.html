@@ -126,6 +126,9 @@
         .status-closed-sl { color: #f6465d; }
         .status-pending  { color: #f59e0b; }
         .status-sent     { color: #3b82f6; }
+        .status-open-exchange { color: #0ebd73; }
+        .status-waiting_ta { color: #f59e0b; }
+        .status-processing { color: #f59e0b; }
 
         .error-text {
             display: block;
@@ -728,6 +731,9 @@
                 'closed_tp': ['status-closed-tp', '✅ closed (TP)'],
                 'closed_sl': ['status-closed-sl', '❌ closed (SL)'],
                 'pending':   ['status-pending',   '⏳ pending'],
+                'open_exchange': ['status-open-exchange', '🟢 open (exchange)'],
+                'waiting_ta': ['status-waiting_ta', '⏳ waiting TA'],
+                'processing': ['status-processing', '⚙️ processing'],
                 'parsed':    ['status-pending',   '⏳ waiting'],
             };
             const [cls, label] = map[status] || ['status-skipped', status];

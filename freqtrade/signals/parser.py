@@ -38,7 +38,7 @@ _ENTRY_SYMBOL_PATTERN = re.compile(r"^.*?Монета:\s*([A-Za-z0-9]+)\s*$", re
 _ENTRY_PRICE_PATTERN = re.compile(r"^.*?Вход:\s*(?:от\s*)?([\d\.]+)(?:\s*(?:-|до)\s*([\d\.]+))?\s*$", re.IGNORECASE | re.MULTILINE)
 _ENTRY_TARGET_PATTERN = re.compile(r"^.*?Цель:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
 _ENTRY_STOP_PATTERN = re.compile(r"^.*?Стоп:\s*([\d\.]+)\s*$", re.IGNORECASE | re.MULTILINE)
-_ENTRY_LEVERAGE_PATTERN = re.compile(r"^.*?Плечо:\s*(?:\d+-)?(\d+)[xх]?\s*$", re.IGNORECASE | re.MULTILINE)
+_ENTRY_LEVERAGE_PATTERN = re.compile(r"^.*?Плечо:\s*(\d+)(?:-(\d+))?[xх]?\s*$", re.IGNORECASE | re.MULTILINE)
 
 # Exit regex patterns
 # Expected: DOGE - тейк ✅ or SUI - стоп
@@ -129,6 +129,8 @@ def parse_signal_text(text: str) -> Optional[SignalEvent]:
 
         leverage = None
         if leverage_match:
+            # Use the LOWER bound of the range (e.g. "25-50x" → 25)
+            # group(1) is always the first number, group(2) is the upper bound if present
             leverage = int(leverage_match.group(1))
             
         return SignalEvent(
