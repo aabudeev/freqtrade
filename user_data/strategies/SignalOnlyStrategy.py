@@ -67,21 +67,19 @@ class SignalOnlyStrategy(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
-        # Use stoploss from signal
-        signal_sl = trade.get_custom_data("signal_sl")
-        if signal_sl is not None:
-            sl_price = float(signal_sl)
+        """
+        Strictly use the stoploss price set during entry.
+        No trailing, no adjustments.
+        """
+        if trade.stop_loss:
+            # Calculate relative stoploss based on current rate
             if not trade.is_short:
-                if sl_price < current_rate:
-                    return (sl_price / current_rate) - 1
+                return (trade.stop_loss / current_rate) - 1
             else:
-                if sl_price > current_rate:
-                    return 1 - (sl_price / current_rate)
+                return 1 - (trade.stop_loss / current_rate)
         
-        # Safety stoploss if signal data is missing
-        lev = trade.leverage if trade.leverage else 1.0
-        safety_sl = (0.8 / lev)
-        return -safety_sl
+        # Fallback to -15% if something is totally wrong
+        return -0.15
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:

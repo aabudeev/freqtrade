@@ -204,14 +204,17 @@ class SignalWorker:
                             if trade:
                                 trade.set_custom_data("signal_id", key)
                                 if event.stop:
-                                    trade.set_custom_data("signal_sl", event.stop)
-                                    # Set initial stop-loss immediately for stoploss_on_exchange
+                                    # Force set stop_loss to the exact value from signal
                                     trade.stop_loss = float(event.stop)
+                                    trade.set_custom_data("signal_sl", event.stop)
                                     if trade.open_rate:
                                         trade.stop_loss_pct = (trade.stop_loss / trade.open_rate) - 1
                                     
                                 if event.target:
                                     trade.set_custom_data("signal_tp", event.target)
+                                
+                                # Commit changes to ensure stop_loss is saved
+                                Trade.commit()
                                 
                                 logger.info(f"Created Trade {trade.id} for signal {key}. SL: {event.stop}, TP: {event.target}")
                                 self.store.mark_status(key, "sent")
@@ -233,6 +236,13 @@ class SignalWorker:
                         # In tests or if bot is not passed
                         self.store.mark_status(key, "parsed")
             except Exception as e:
+                # Rollback database session on error to prevent "transaction rolled back" loop
+                try:
+                    from freqtrade.persistence import Trade
+                    Trade.session.rollback()
+                except Exception:
+                    pass
+
                 err_msg = str(e)
                 if "trader is not running" in err_msg.lower():
                     logger.warning(f"Bot is not in RUNNING state while processing {key}. Returning to pending.")
