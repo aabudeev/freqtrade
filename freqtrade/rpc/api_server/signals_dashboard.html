@@ -335,7 +335,7 @@
             </div>
             <div class="form-group" id="group_fixed">
                 <label>Amount ($)</label>
-                <input type="number" id="set_stake_fixed_amount" value="10" step="1">
+                <input type="number" id="set_stake_fixed_amount" value="20" step="1">
             </div>
             <div class="form-group" id="group_perc" style="display:none">
                 <label>Percentage (%)</label>
@@ -343,7 +343,7 @@
             </div>
             <div class="form-group">
                 <label>Default Leverage</label>
-                <input type="number" id="set_default_leverage" value="50" step="1">
+                <input type="number" id="set_default_leverage" value="25" step="1">
             </div>
             <div class="form-group">
                 <label>Entry Strategy</label>
@@ -591,9 +591,9 @@
                 const data = await res.json();
                 if (!data.error) {
                     document.getElementById('set_stake_mode').value = data.stake_mode || 'fixed';
-                    document.getElementById('set_stake_fixed_amount').value = data.stake_fixed_amount || 10;
+                    document.getElementById('set_stake_fixed_amount').value = data.stake_fixed_amount || 20;
                     document.getElementById('set_stake_percentage').value = data.stake_percentage || 3;
-                    document.getElementById('set_default_leverage').value = data.default_leverage || 50;
+                    document.getElementById('set_default_leverage').value = data.default_leverage || 25;
                     document.getElementById('set_entry_mode').value = data.entry_mode || 'single';
                     document.getElementById('set_exchange_mode').value = data.exchange_mode || 'vst';
                     document.getElementById('set_strategy_mode').value = data.strategy_mode || 'signal';
