@@ -205,21 +205,22 @@ class SignalWorker:
                                 trade.set_custom_data("signal_id", key)
                                 
                                 # --- SL on exchange immediately ---
-                                if event.stop:
-                                    sl_price = float(event.stop)
-                                    trade.stop_loss = sl_price
-                                    trade.set_custom_data("signal_sl", event.stop)
-                                    if trade.open_rate:
-                                        trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
-                                    
-                                    Trade.commit()
-                                    
-                                    # Place SL order on exchange immediately
-                                    try:
-                                        self.bot.create_stoploss_order(trade, sl_price)
-                                        logger.info(f"SL order placed on exchange: {sl_price}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to place SL on exchange: {e}")
+                               if event.stop:
+                                   sl_price = float(event.stop)
+                                   trade.stop_loss = sl_price
+                                   trade.set_custom_data("signal_sl", event.stop)
+                                   if trade.open_rate:
+                                       trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
+                                   
+                                   Trade.commit()
+                                   
+                                   # Place SL order on exchange immediately
+                                   try:
+                                       self.bot.create_stoploss_order(trade, sl_price)
+                                       logger.info(f"SL order placed on exchange: {sl_price}")
+                                   except Exception as e:
+                                       logger.error(f"Failed to place SL on exchange: {e}")
+                                
                                 # --- TP on exchange immediately ---
                                 if event.target:
                                     trade.set_custom_data("signal_tp", event.target)
