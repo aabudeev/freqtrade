@@ -335,31 +335,41 @@ class SignalWorker:
         try:
             from freqtrade.persistence import Trade
             
-            # Find all signals currently in progress (sent)
+            # Find all signals currently in progress (sent or open_exchange)
             conn = self.store._connect()
             try:
                 cursor = conn.cursor()
-                cursor.execute("SELECT idempotency_key FROM ingest_queue WHERE status = 'sent'")
-                active_signals = [row[0] for row in cursor.fetchall()]
+                cursor.execute(
+                    "SELECT idempotency_key, symbol FROM ingest_queue "
+                    "WHERE status IN ('sent', 'open_exchange')"
+                )
+                active_signals = cursor.fetchall()
             finally:
                 conn.close()
 
-            for key in active_signals:
+            for key, symbol in active_signals:
+                # Strategy 1: search by enter_tag
                 tag_full = f"telegram_{key}"
                 tag_short = f"telegram_{key[:8]}"
-                # Search for trade in Freqtrade by tag
                 trade = Trade.get_trades([Trade.enter_tag.in_([tag_full, tag_short])]).first()
                 
-                if trade:
-                    if not trade.is_open:
-                        new_status = "closed_tp"
-                        # If profit is negative or SL mentioned in exit reason
-                        if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
-                           (trade.close_profit and trade.close_profit < 0):
-                            new_status = "closed_sl"
-                            
-                        logger.info(f"Trade for signal {key} closed ({trade.exit_reason}). Status: {new_status}")
-                        self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
+                # Strategy 2: if not found by tag, search by pair + is_open
+                if not trade and symbol:
+                    pair = f"{symbol}/USDT:USDT"
+                    trade = Trade.get_trades([
+                        Trade.pair == pair,
+                        Trade.is_open.is_(True)
+                    ]).first()
+                
+                if trade and not trade.is_open:
+                    new_status = "closed_tp"
+                    # If profit is negative or SL mentioned in exit reason
+                    if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
+                       (trade.close_profit and trade.close_profit < 0):
+                        new_status = "closed_sl"
+                        
+                    logger.info(f"Trade for signal {key} closed ({trade.exit_reason}). Status: {new_status}")
+                    self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
 
         except Exception as e:
             logger.error(f"Error during trade status synchronization: {e}")
