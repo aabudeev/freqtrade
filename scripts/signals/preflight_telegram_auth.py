@@ -59,6 +59,16 @@ async def _bot_send_photo(token: str, chat_id: str, png: bytes, caption: str) ->
             data={"chat_id": chat_id, "caption": caption[:1024]},
             files={"photo": ("qr.png", png, "image/png")},
         )
+        if r.status_code == 429:
+            retry_after = r.json().get("parameters", {}).get("retry_after", 30)
+            log.warning(f"Telegram 429 rate limit on sendPhoto. Waiting {retry_after}s...")
+            import asyncio
+            await asyncio.sleep(retry_after)
+            r = await client.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption[:1024]},
+                files={"photo": ("qr.png", png, "image/png")},
+            )
         r.raise_for_status()
         body = r.json()
         if not body.get("ok"):
@@ -71,6 +81,12 @@ async def _bot_send_message(token: str, chat_id: str, text: str) -> None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     async with httpx.AsyncClient(trust_env=True, timeout=60.0) as client:
         r = await client.post(url, json={"chat_id": chat_id, "text": text[:4096]})
+        if r.status_code == 429:
+            retry_after = r.json().get("parameters", {}).get("retry_after", 30)
+            log.warning(f"Telegram 429 rate limit. Waiting {retry_after}s before retry...")
+            import asyncio
+            await asyncio.sleep(retry_after)
+            r = await client.post(url, json={"chat_id": chat_id, "text": text[:4096]})
         r.raise_for_status()
         body = r.json()
         if not body.get("ok"):
