@@ -546,6 +546,9 @@ class SignalWorker:
                 if p.get('contracts') and float(p['contracts']) != 0
             ]
 
+            # 2. Sync with ingest_queue and reconcile TP orders
+            self._reconcile_tp_orders()
+
             if not open_positions:
                 return
 
@@ -708,6 +711,57 @@ class SignalWorker:
                 logger.info(res)
         except Exception as e:
             logger.error(f"Diagnostic error: {e}")
+
+    def _reconcile_tp_orders(self):
+        """
+        Ensure all open trades have a Take Profit order on the exchange.
+        """
+        if not self.bot or not self.bot.exchange:
+            return
+
+        try:
+            from freqtrade.persistence import Trade
+            open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
+            
+            for trade in open_trades:
+                tp_price_str = trade.get_custom_data("signal_tp")
+                if not tp_price_str:
+                    continue
+                
+                try:
+                    tp_price = float(tp_price_str)
+                    
+                    # Fetch open orders for this pair to see if TP already exists
+                    open_orders = self.bot.exchange.fetch_open_orders(trade.pair)
+                    
+                    # Look for a limit order at the TP price
+                    tp_order_exists = False
+                    for order in open_orders:
+                        if order['side'] == trade.exit_side and \
+                           order['type'] == 'limit' and \
+                           abs(float(order['price']) - tp_price) / tp_price < 0.0001:
+                            tp_order_exists = True
+                            break
+                    
+                    if not tp_order_exists:
+                        logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
+                        exit_side = trade.exit_side
+                        self.bot.exchange.create_order(
+                            pair=trade.pair,
+                            ordertype="limit",
+                            side=exit_side,
+                            amount=trade.amount,
+                            price=tp_price,
+                            leverage=trade.leverage,
+                            params={"reduceOnly": True}
+                        )
+                        logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                        
+                except Exception as e:
+                    logger.error(f"Error during TP reconciliation for {trade.pair}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Global TP reconciliation error: {e}")
 
     def _run_loop(self):
         logger.info("SignalWorker started")
