@@ -237,29 +237,33 @@ class SignalWorker:
                                     sl_price = float(event.stop)
                                     
                                     # --- Liquidation Safety Check ---
-                                    # For SHORT, SL must be BELOW liquidation. For LONG, SL must be ABOVE liquidation.
-                                    # Note: trade.liquidation_price might be None if not yet synced.
-                                    if trade.liquidation_price:
-                                        if trade.is_short and sl_price >= trade.liquidation_price:
-                                            logger.warning(f"Signal SL {sl_price} is beyond liquidation {trade.liquidation_price}. Capping SL.")
-                                            sl_price = trade.liquidation_price * 0.995 # 0.5% buffer before liquidation
-                                        elif not trade.is_short and sl_price <= trade.liquidation_price:
-                                            logger.warning(f"Signal SL {sl_price} is beyond liquidation {trade.liquidation_price}. Capping SL.")
-                                            sl_price = trade.liquidation_price * 1.005 # 0.5% buffer before liquidation
+                                    # Calculate theoretical liquidation if not yet available from exchange
+                                    liq_price = trade.liquidation_price
+                                    if not liq_price and trade.open_rate and trade.leverage:
+                                        # Very conservative theoretical liquidation calculation
+                                        # Short: Entry * (1 + 1/Leverage) | Long: Entry * (1 - 1/Leverage)
+                                        # We use a 10% safety margin on the maintenance margin (approx 0.9 factor)
+                                        if trade.is_short:
+                                            liq_price = trade.open_rate * (1 + 0.95 / trade.leverage)
+                                        else:
+                                            liq_price = trade.open_rate * (1 - 0.95 / trade.leverage)
+                                    
+                                    if liq_price:
+                                        if trade.is_short and sl_price >= liq_price:
+                                            logger.warning(f"Signal SL {sl_price} is beyond liquidation {liq_price:.5f}. Capping SL.")
+                                            sl_price = liq_price * 0.99 # 1% buffer
+                                        elif not trade.is_short and sl_price <= liq_price:
+                                            logger.warning(f"Signal SL {sl_price} is beyond liquidation {liq_price:.5f}. Capping SL.")
+                                            sl_price = liq_price * 1.01 # 1% buffer
 
                                     trade.stop_loss = sl_price
                                     trade.set_custom_data("signal_sl", str(sl_price))
                                     if trade.open_rate:
-                                        # Correct Freqtrade stoploss percentage calculation
-                                        # Long: (sl - open) / open | Short: (open - sl) / open
                                         if not trade.is_short:
                                             trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
                                         else:
-                                            # For SHORT: (open_rate - sl_price) / open_rate
-                                            # e.g. (100 - 110) / 100 = -0.10
                                             trade.stop_loss_pct = (trade.open_rate - sl_price) / trade.open_rate
                                         
-                                        # Ensure it's negative (Freqtrade requirement for protective SL)
                                         if trade.stop_loss_pct > 0:
                                             trade.stop_loss_pct = -trade.stop_loss_pct
                                     
@@ -275,12 +279,12 @@ class SignalWorker:
                                         logger.warning("Trying automatic SL calculation...")
                                         auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
                                         
-                                        # Ensure auto SL is also within liquidation
-                                        if trade.liquidation_price:
+                                        # Ensure auto SL is also within safety limits
+                                        if liq_price:
                                             if trade.is_short:
-                                                auto_sl_price = min(auto_sl_price, trade.liquidation_price * 0.99)
+                                                auto_sl_price = min(auto_sl_price, liq_price * 0.99)
                                             else:
-                                                auto_sl_price = max(auto_sl_price, trade.liquidation_price * 1.01)
+                                                auto_sl_price = max(auto_sl_price, liq_price * 1.01)
 
                                         try:
                                             self.bot.create_stoploss_order(trade, auto_sl_price)
@@ -289,10 +293,10 @@ class SignalWorker:
                                             if not trade.is_short:
                                                 trade.stop_loss_pct = (auto_sl_price / trade.open_rate) - 1
                                             else:
-                                                trade.stop_loss_pct = (trade.open_rate / auto_sl_price) - 1
+                                                trade.stop_loss_pct = (trade.open_rate - auto_sl_price) / trade.open_rate
                                         except Exception as e2:
                                             logger.error(f"Failed to place auto SL on exchange: {e2}")
-                                            logger.warning("Both SL attempts failed. Trade will continue without exchange stoploss.")
+                                            logger.warning("Both SL attempts failed. Freqtrade will retry SL placement in its main loop.")
                                 else:
                                     # No SL in signal, calculate auto SL
                                     auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
@@ -300,7 +304,7 @@ class SignalWorker:
                                     if not trade.is_short:
                                         trade.stop_loss_pct = (auto_sl_price / trade.open_rate) - 1
                                     else:
-                                        trade.stop_loss_pct = (trade.open_rate / auto_sl_price) - 1
+                                        trade.stop_loss_pct = (trade.open_rate - auto_sl_price) / trade.open_rate
                                     
                                     Trade.commit()
                                     try:
@@ -310,26 +314,22 @@ class SignalWorker:
                                         logger.error(f"Failed to place auto SL: {e}")
 
                                 # --- TP Handling ---
-                                tp_price = None
-                                if event.target:
-                                    tp_price = float(event.target)
-                                    trade.set_custom_data("signal_tp", str(tp_price))
-                                else:
-                                    # Calculate automatic TP
-                                    # Account for fees (approx 0.1% total) by ensuring TP is at least 0.5%
-                                    safe_tp_pct = max(default_tp_pct, 0.005) 
-                                    auto_tp_price = trade.open_rate * (1 + safe_tp_pct) if not trade.is_short else trade.open_rate * (1 - safe_tp_pct)
-                                    tp_price = auto_tp_price
-                                    trade.set_custom_data("signal_tp", str(tp_price))
-                                    logger.info(f"Auto TP set (no signal TP): {tp_price}")
+                                # We use a try-except here to ensure SL errors don't prevent TP placement
+                                try:
+                                    tp_price = None
+                                    if event.target:
+                                        tp_price = float(event.target)
+                                        trade.set_custom_data("signal_tp", str(tp_price))
+                                    else:
+                                        # Calculate automatic TP
+                                        safe_tp_pct = max(default_tp_pct, 0.005) 
+                                        auto_tp_price = trade.open_rate * (1 + safe_tp_pct) if not trade.is_short else trade.open_rate * (1 - safe_tp_pct)
+                                        tp_price = auto_tp_price
+                                        trade.set_custom_data("signal_tp", str(tp_price))
+                                        logger.info(f"Auto TP set (no signal TP): {tp_price}")
 
-                                if tp_price:
-                                    try:
-                                        exit_side = trade.exit_side  # "sell" for LONG
-                                        
-                                        # Check if TP order already exists (manual sync)
-                                        # (Simple check for now, can be improved)
-                                        
+                                    if tp_price:
+                                        exit_side = trade.exit_side
                                         tp_order = self.bot.exchange.create_order(
                                             pair=trade.pair,
                                             ordertype="limit",
@@ -340,29 +340,28 @@ class SignalWorker:
                                             params={"reduceOnly": True}
                                         )
                                         logger.info(f"TP order placed on exchange: {tp_price} (id={tp_order.get('id', '?')})")
-                                    except Exception as e:
-                                        logger.error(f"Failed to place TP on exchange: {e}")
-                                        # If signal TP failed, try auto TP as fallback
-                                        if event.target:
-                                            logger.warning("Signal TP failed. Trying automatic TP calculation...")
-                                            auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
-                                            try:
-                                                tp_order = self.bot.exchange.create_order(
-                                                    pair=trade.pair,
-                                                    ordertype="limit",
-                                                    side=exit_side,
-                                                    amount=trade.amount,
-                                                    price=auto_tp_price,
-                                                    leverage=trade.leverage,
-                                                    params={"reduceOnly": True}
-                                                )
-                                                logger.info(f"Auto TP fallback placed on exchange: {auto_tp_price}")
-                                                trade.set_custom_data("signal_tp", str(auto_tp_price))
-                                            except Exception as e2:
-                                                logger.error(f"Auto TP fallback failed: {e2}")
-                                                logger.warning("Both TP attempts failed. Trade will continue without exchange TP.")
+                                except Exception as e:
+                                    logger.error(f"Failed to place TP on exchange: {e}")
+                                    # Fallback to auto TP if signal TP failed
+                                    if event.target:
+                                        logger.warning("Signal TP failed. Trying automatic TP fallback...")
+                                        auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
+                                        try:
+                                            self.bot.exchange.create_order(
+                                                pair=trade.pair,
+                                                ordertype="limit",
+                                                side=exit_side,
+                                                amount=trade.amount,
+                                                price=auto_tp_price,
+                                                leverage=trade.leverage,
+                                                params={"reduceOnly": True}
+                                            )
+                                            logger.info(f"Auto TP fallback placed: {auto_tp_price}")
+                                            trade.set_custom_data("signal_tp", str(auto_tp_price))
+                                        except Exception as e2:
+                                            logger.error(f"Auto TP fallback failed: {e2}")
                                 
-                                # Commit all changes
+                                # Final commit
                                 Trade.commit()
                                 
                                 logger.info(f"Created Trade {trade.id} for signal {key}. SL: {trade.stop_loss}, TP: {trade.get_custom_data('signal_tp')}")
