@@ -204,6 +204,34 @@ class SignalWorker:
                             if trade:
                                 trade.set_custom_data("signal_id", key)
                                 
+                                # --- Liquidity and volume check before opening trade ---
+                                try:
+                                    # Check if we can place orders (basic liquidity check)
+                                    ticker = self.bot.exchange.fetch_ticker(event.symbol)
+                                    current_price = ticker['last']
+                                    bid_price = ticker['bid']
+                                    ask_price = ticker['ask']
+                                    quote_volume = ticker['quoteVolume']
+                                    
+                                    # Basic sanity check - if bid/ask are too far apart, skip trade
+                                    if abs(ask_price - bid_price) / bid_price > 0.05:  # More than 5% spread
+                                        logger.warning(f"High spread detected for {event.symbol}: {abs(ask_price - bid_price) / bid_price * 100:.2f}%")
+                                    
+                                    # Check minimum order size
+                                    market = self.bot.exchange.markets[event.symbol]
+                                    min_amount = market['limits']['amount']['min']
+                                    min_cost = market['limits']['cost']['min']
+                                    
+                                    if min_amount is not None and trade.amount < min_amount:
+                                        logger.warning(f"Order amount too small for {event.symbol}: {trade.amount} < {min_amount}")
+                                        self.store.mark_status(key, "failed", f"Order amount too small: {trade.amount} < {min_amount}")
+                                        return len(claimed)
+                                        
+                                except Exception as e:
+                                    logger.warning(f"Liquidity check failed for {event.symbol}: {e}")
+                                    # Continue with trade anyway, but warn user
+                                    pass
+                                
                                 # --- SL on exchange immediately ---
                                 if event.stop:
                                     sl_price = float(event.stop)
@@ -215,11 +243,46 @@ class SignalWorker:
                                     Trade.commit()
                                     
                                     # Place SL order on exchange immediately
+                                    sl_placed = False
                                     try:
                                         self.bot.create_stoploss_order(trade, sl_price)
                                         logger.info(f"SL order placed on exchange: {sl_price}")
+                                        sl_placed = True
                                     except Exception as e:
                                         logger.error(f"Failed to place SL on exchange: {e}")
+                                    
+                                    # If SL placement failed, try automatic SL calculation
+                                    if not sl_placed:
+                                        logger.warning("SL placement failed. Trying automatic calculation...")
+                                        # Calculate automatic SL based on leverage and default percentage
+                                        # Use more conservative percentages for better safety
+                                        default_sl_pct = 0.025  # 2.5% by default (more conservative)
+                                        auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
+                                        
+                                        try:
+                                            self.bot.create_stoploss_order(trade, auto_sl_price)
+                                            logger.info(f"Auto SL order placed on exchange: {auto_sl_price}")
+                                            sl_placed = True
+                                        except Exception as e2:
+                                            logger.error(f"Failed to place auto SL on exchange: {e2}")
+                                            # If both attempts fail, cancel the trade
+                                            logger.warning("Both SL attempts failed. Cancelling trade.")
+                                            self.store.mark_status(key, "failed", "SL placement failed")
+                                            # Also close the trade properly if it was partially created
+                                            try:
+                                                from freqtrade.persistence import Trade
+                                                Trade.session.rollback()
+                                            except Exception:
+                                                pass
+                                            return len(claimed)
+                                    
+                                    # If we don't have TP from signal, set default TP
+                                    if not event.target:
+                                        # Calculate automatic TP based on leverage and default percentage
+                                        default_tp_pct = 0.035  # 3.5% by default (more conservative)
+                                        auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
+                                        trade.set_custom_data("signal_tp", str(auto_tp_price))
+                                        logger.info(f"Auto TP set: {auto_tp_price}")
                                 # --- TP on exchange immediately ---
                                 if event.target:
                                     trade.set_custom_data("signal_tp", event.target)
@@ -243,6 +306,29 @@ class SignalWorker:
                                         )
                                     except Exception as e:
                                         logger.error(f"Failed to place TP on exchange: {e}")
+                                        # If TP placement fails, try automatic TP calculation
+                                        logger.warning("TP placement failed. Trying automatic calculation...")
+                                        # Calculate automatic TP based on leverage and default percentage
+                                        default_tp_pct = 0.02  # 2% by default
+                                        auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
+                                        
+                                        try:
+                                            tp_order = self.bot.exchange.create_order(
+                                                pair=trade.pair,
+                                                ordertype="limit",
+                                                side=exit_side,
+                                                amount=trade.amount,
+                                                price=auto_tp_price,
+                                                leverage=trade.leverage,
+                                                params={"reduceOnly": True}
+                                            )
+                                            logger.info(
+                                                f"Auto TP order placed on exchange: {auto_tp_price} "
+                                                f"(order_id={tp_order.get('id', '?')})"
+                                            )
+                                            trade.set_custom_data("signal_tp", str(auto_tp_price))
+                                        except Exception as e2:
+                                            logger.error(f"Failed to place auto TP on exchange: {e2}")
                                 
                                 # Commit all changes
                                 Trade.commit()
