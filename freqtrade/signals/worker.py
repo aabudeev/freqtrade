@@ -271,9 +271,36 @@ class SignalWorker:
                                     
                                     # Place SL order on exchange immediately
                                     try:
+                                        # --- Price Check Before Placing SL ---
+                                        # If price is already past SL, we shouldn't try to place it (it will fail or trigger immediately)
+                                        ticker = self.bot.exchange.fetch_ticker(trade.pair)
+                                        current_price = ticker.get('last') or ticker.get('close')
+                                        
+                                        is_past_sl = False
+                                        if current_price:
+                                            if trade.is_short and current_price >= sl_price:
+                                                is_past_sl = True
+                                            elif not trade.is_short and current_price <= sl_price:
+                                                is_past_sl = True
+                                        
+                                        if is_past_sl:
+                                            logger.warning(f"Price {current_price} already past SL {sl_price}. EMERGENCY EXIT.")
+                                            self.bot.handle_trade_exit(trade, current_price, "stop_loss_hit_immediate")
+                                            return len(claimed) # Stop processing this trade
+                                            
                                         self.bot.create_stoploss_order(trade, sl_price)
                                         logger.info(f"Signal SL order placed on exchange: {sl_price}")
                                     except Exception as e:
+                                        error_msg = str(e).lower()
+                                        # BingX error 110412: "Stop Loss price should be greater than the current price" (for short)
+                                        # This often means price is already past or at the SL level.
+                                        if "110412" in error_msg or "price should be" in error_msg:
+                                            logger.warning(f"SL rejected by exchange (likely price past SL): {e}. EMERGENCY EXIT.")
+                                            ticker = self.bot.exchange.fetch_ticker(trade.pair)
+                                            exit_price = ticker.get('last') or sl_price
+                                            self.bot.handle_trade_exit(trade, exit_price, "stop_loss_rejected_market_exit")
+                                            return len(claimed)
+                                            
                                         logger.error(f"Failed to place signal SL on exchange: {e}")
                                         # Try automatic SL calculation as fallback
                                         logger.warning("Trying automatic SL calculation...")
@@ -308,6 +335,16 @@ class SignalWorker:
                                     
                                     Trade.commit()
                                     try:
+                                        # Price check for auto SL
+                                        ticker = self.bot.exchange.fetch_ticker(trade.pair)
+                                        current_price = ticker.get('last') or ticker.get('close')
+                                        if current_price:
+                                            if (trade.is_short and current_price >= auto_sl_price) or \
+                                               (not trade.is_short and current_price <= auto_sl_price):
+                                                logger.warning(f"Price {current_price} already past Auto SL {auto_sl_price}. EMERGENCY EXIT.")
+                                                self.bot.handle_trade_exit(trade, current_price, "auto_stop_loss_hit_immediate")
+                                                return len(claimed)
+
                                         self.bot.create_stoploss_order(trade, auto_sl_price)
                                         logger.info(f"Auto SL placed (no signal SL): {auto_sl_price}")
                                     except Exception as e:
