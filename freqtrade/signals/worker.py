@@ -107,14 +107,22 @@ class SignalWorker:
             try:
                 event = parse_signal_text(text)
                 if event is None:
-                    # Parsing failed
-                    logger.warning(f"Failed to parse signal {key}: {text[:50]}...")
-                    self.store.mark_status(key, "failed", "Parse failed or unknown format")
-                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                        self.bot.rpc.send_msg({
-                            'type': RPCMessageType.WARNING,
-                            'status': f"⚠️ Signal parsing error:\n{text[:100]}..."
-                        })
+                    # Determine if this was a noise message or a failed signal
+                    signal_keywords = ["SHORT", "LONG", "МОНЕТА", "ВХОД", "СТОП", "ЦЕЛЬ"]
+                    is_potential_signal = any(kw in text.upper() for kw in signal_keywords)
+                    
+                    if is_potential_signal:
+                        logger.warning(f"Failed to parse potential signal {key}: {text[:50]}...")
+                        self.store.mark_status(key, "failed", "Parse failed or unknown format")
+                        if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                            self.bot.rpc.send_msg({
+                                'type': RPCMessageType.WARNING,
+                                'status': f"⚠️ Signal parsing error (potential signal missed):\n{text[:100]}..."
+                            })
+                    else:
+                        # Chat message or news, ignore quietly
+                        logger.info(f"Ignoring non-signal message {key}")
+                        self.store.mark_status(key, "skipped", "Non-signal message")
                 else:
                     # TTL check (4 hours)
                     occ_dt = datetime.fromisoformat(row['occurred_at'])
