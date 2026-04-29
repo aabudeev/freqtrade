@@ -61,6 +61,13 @@ async def _bot_send_photo(token: str, chat_id: str, png: bytes, caption: str) ->
         )
         if r.status_code == 429:
             retry_after = r.json().get("parameters", {}).get("retry_after", 30)
+            max_wait = 60
+            if retry_after > max_wait:
+                log.warning(
+                    f"Telegram 429 rate limit on sendPhoto: retry_after={retry_after}s exceeds max {max_wait}s. "
+                    f"Skipping photo to avoid blocking startup."
+                )
+                return
             log.warning(f"Telegram 429 rate limit on sendPhoto. Waiting {retry_after}s...")
             import asyncio
             await asyncio.sleep(retry_after)
@@ -83,6 +90,13 @@ async def _bot_send_message(token: str, chat_id: str, text: str) -> None:
         r = await client.post(url, json={"chat_id": chat_id, "text": text[:4096]})
         if r.status_code == 429:
             retry_after = r.json().get("parameters", {}).get("retry_after", 30)
+            max_wait = 60  # Don't block startup for more than 60s
+            if retry_after > max_wait:
+                log.warning(
+                    f"Telegram 429 rate limit: retry_after={retry_after}s exceeds max {max_wait}s. "
+                    f"Skipping message to avoid blocking startup."
+                )
+                return
             log.warning(f"Telegram 429 rate limit. Waiting {retry_after}s before retry...")
             import asyncio
             await asyncio.sleep(retry_after)
