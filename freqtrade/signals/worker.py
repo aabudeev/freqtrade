@@ -410,12 +410,16 @@ class SignalWorker:
                             from freqtrade.persistence import Trade
                             # Search for open trade for this coin
                             trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
-                            if trade:
-                                self.bot.rpc._rpc._rpc_force_exit(str(trade.id), ordertype="market")
-                                logger.info(f"Closed Trade {trade.id} via signal {key}")
-                                self.store.mark_status(key, "sent")
+                            if trade and trade.is_open:
+                                try:
+                                    self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                                    logger.info(f"Closed Trade {trade.id} via signal {key}")
+                                    self.store.mark_status(key, "sent")
+                                except Exception as e:
+                                    logger.warning(f"Failed to force exit trade {trade.id} (maybe already closed): {e}")
+                                    self.store.mark_status(key, "failed", str(e))
                             else:
-                                logger.info(f"Trade for exit {event.symbol} not found. Skipping.")
+                                logger.info(f"Trade for exit {event.symbol} already closed or not found. Skipping.")
                                 self.store.mark_status(key, "skipped", "Open trade not found for exit")
                     else:
                         # In tests or if bot is not passed
@@ -732,7 +736,8 @@ class SignalWorker:
                     tp_price = float(tp_price_str)
                     
                     # Fetch open orders for this pair to see if TP already exists
-                    open_orders = self.bot.exchange.fetch_open_orders(trade.pair)
+                    # Use CCXT directly to avoid potential wrapper missing attributes
+                    open_orders = self.bot.exchange._api.fetch_open_orders(trade.pair)
                     
                     # Look for a limit order at the TP price
                     tp_order_exists = False
