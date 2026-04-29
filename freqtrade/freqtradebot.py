@@ -1496,7 +1496,26 @@ class FreqtradeBot(LoggingMixin):
 
             if stoploss_order:
                 stoploss_orders.append(stoploss_order)
-                self.update_trade_state(trade, slo.order_id, stoploss_order, stoploss_order=True)
+                # BingX may return a fill-order with a different ID than the trigger order.
+                # Update the local order ID to match what the exchange returns.
+                exchange_order_id = stoploss_order.get("id")
+                if exchange_order_id and exchange_order_id != slo.order_id:
+                    logger.info(
+                        f"Stoploss order ID mismatch for {trade.pair}: "
+                        f"local={slo.order_id}, exchange={exchange_order_id}. Updating."
+                    )
+                    slo.order_id = exchange_order_id
+                    Trade.commit()
+                try:
+                    self.update_trade_state(trade, slo.order_id, stoploss_order, stoploss_order=True)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to update trade state for stoploss order {slo.order_id}: {e}. "
+                        f"Marking order as closed locally."
+                    )
+                    # Force-close the order locally to break the loop
+                    slo.status = "closed"
+                    Trade.commit()
 
             # We check if stoploss order is fulfilled
             if stoploss_order and stoploss_order["status"] in ("closed", "triggered"):
