@@ -1,7 +1,7 @@
 {
     "strategy": "IndicatorOnlyStrategy",
     "bot_name": "FT_INDICATORS",
-    "stake_amount": 10,
+    "stake_amount": 20,
     "max_open_trades": 10,
     "dry_run": false,
     "strategy_settings": {
