@@ -721,28 +721,55 @@ class SignalWorker:
 
     def _reconcile_tp_orders(self):
         """
-        Ensure all open trades have a Take Profit order on the exchange.
+        Check if open trades have their corresponding TP orders on the exchange.
+        If not, place them. Also detects if position is closed on exchange.
         """
         if not self.bot or not self.bot.exchange:
             return
 
+        from freqtrade.persistence import Trade
+        open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
+        if not open_trades:
+            return
+
         try:
-            from freqtrade.persistence import Trade
-            open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
+            # Fetch all active positions to verify they still exist
+            positions = self.bot.exchange.fetch_positions()
+            # Symbols in positions can be DOT-USDT or DOT/USDT:USDT
+            pos_map = {}
+            for p in positions:
+                contracts = float(p.get('contracts', 0) or p.get('size', 0))
+                if contracts != 0:
+                    pos_map[p['symbol']] = p
             
             for trade in open_trades:
+                # 1. Check if position still exists on exchange
+                # CCXT symbol DOT/USDT:USDT vs positions symbol possibly DOT-USDT
+                # We do a loose check
+                pair_key = trade.pair
+                if pair_key not in pos_map:
+                    # Try simple symbol DOT-USDT
+                    alt_key = trade.pair.replace('/', '-').split(':')[0]
+                    if alt_key not in pos_map:
+                        logger.warning(f"RECONCILE: Position for {trade.pair} missing on exchange. Marking trade as closed in DB.")
+                        try:
+                            ticker = self.bot.exchange.fetch_ticker(trade.pair)
+                            close_price = ticker.get('last') or ticker.get('close') or trade.open_rate
+                            self.bot.handle_trade_exit(trade, close_price, "external_exit")
+                            self._update_signal_status_for_trade(trade, "closed(ext)")
+                        except Exception as e_close:
+                            logger.error(f"Error closing ghost trade {trade.pair}: {e_close}")
+                        continue
+
+                # 2. Check if TP order exists
                 tp_price_str = trade.get_custom_data("signal_tp")
                 if not tp_price_str:
                     continue
                 
                 try:
                     tp_price = float(tp_price_str)
-                    
-                    # Fetch open orders for this pair to see if TP already exists
-                    # Use CCXT directly to avoid potential wrapper missing attributes
                     open_orders = self.bot.exchange._api.fetch_open_orders(trade.pair)
                     
-                    # Look for a limit order at the TP price
                     tp_order_exists = False
                     for order in open_orders:
                         if order['side'] == trade.exit_side and \
@@ -753,22 +780,60 @@ class SignalWorker:
                     
                     if not tp_order_exists:
                         logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
-                        exit_side = trade.exit_side
                         self.bot.exchange._api.create_order(
                             symbol=trade.pair,
                             type="limit",
-                            side=exit_side,
+                            side=trade.exit_side,
                             amount=trade.amount,
                             price=tp_price,
                             params={"reduceOnly": True}
                         )
                         logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
-                        
                 except Exception as e:
                     logger.error(f"Error during TP reconciliation for {trade.pair}: {e}")
-                    
+        except Exception as ge:
+            logger.error(f"Global reconciliation error: {ge}")
+
+    def _update_signal_status_for_trade(self, trade, status_prefix):
+        if not trade.enter_tag:
+            return
+        # Tag format: telegram_telegram:1566432615:13346
+        sig_id = trade.enter_tag.split(':')[-1]
+        self.store.update_signal_status(sig_id, status_prefix)
+
+    def _sync_signal_statuses(self):
+        """
+        Periodically sync signal statuses with trade outcomes.
+        """
+        from freqtrade.persistence import Trade
+        try:
+            conn = self.store._connect()
+            conn.row_factory = dict_factory
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ingest_queue WHERE status = 'ordered'")
+            open_signals = cursor.fetchall()
+            conn.close()
         except Exception as e:
-            logger.error(f"Global TP reconciliation error: {e}")
+            logger.error(f"Error fetching open signals for sync: {e}")
+            return
+
+        for sig in open_signals:
+            tag = f"telegram_telegram:{sig['channel_id']}:{sig['msg_id']}"
+            trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+            if trade:
+                if not trade.is_open:
+                    reason = trade.exit_reason or "exit"
+                    new_status = f"closed({reason})"
+                    self.store.update_signal_status(sig['msg_id'], new_status)
+                    logger.info(f"SYNC: Updated signal {sig['msg_id']} status to {new_status}")
+            else:
+                # If signal is older than 24h and no trade, mark as expired
+                import datetime
+                occ = datetime.datetime.fromisoformat(sig['occurred_at'])
+                if (datetime.datetime.now() - occ).total_seconds() > 86400:
+                    self.store.update_signal_status(sig['msg_id'], "expired")
+        except Exception as e:
+            logger.error(f"Global status sync error: {e}")
 
     def _run_loop(self):
         logger.info("SignalWorker started")
@@ -781,14 +846,14 @@ class SignalWorker:
                 self.process_once()
                 
                 now = time.time()
-                # Sync trade statuses every 30 seconds
+                # Sync signal statuses every 30 seconds
                 if now - last_sync > 30:
-                    self._sync_trade_statuses()
+                    self._sync_signal_statuses()
                     last_sync = now
                 
-                # Reconcile with exchange positions every 60 seconds
+                # Reconcile TP orders and ghost trades every 60 seconds
                 if now - last_reconcile > 60:
-                    self._reconcile_exchange_positions()
+                    self._reconcile_tp_orders()
                     last_reconcile = now
                 
                 # Diagnostics every 2 minutes

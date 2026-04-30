@@ -109,12 +109,24 @@ def get_klines(symbol: str = "BTC/USDT:USDT", timeframe: str = "15m", limit: int
         needed_ms = max(tf_ms * limit * 2, 7 * 24 * 60 * 60 * 1000)
         since_ms = int((datetime.now(UTC) - timedelta(milliseconds=needed_ms)).timestamp() * 1000)
         
-        df = exchange.get_historic_ohlcv(
-            pair=symbol,
-            timeframe=timeframe,
-            since_ms=since_ms,
-            candle_type=CandleType.FUTURES
-        )
+        try:
+            df = exchange.get_historic_ohlcv(
+                pair=symbol,
+                timeframe=timeframe,
+                since_ms=since_ms,
+                candle_type=CandleType.FUTURES
+            )
+        except Exception as e_hist:
+            logger.warning(f"Failed to fetch {limit} klines, retrying with limit=200: {e_hist}")
+            # Try with a smaller limit and more recent since_ms
+            needed_ms_small = max(tf_ms * 200 * 2, 1 * 24 * 60 * 60 * 1000)
+            since_ms_small = int((datetime.now(UTC) - timedelta(milliseconds=needed_ms_small)).timestamp() * 1000)
+            df = exchange.get_historic_ohlcv(
+                pair=symbol,
+                timeframe=timeframe,
+                since_ms=since_ms_small,
+                candle_type=CandleType.FUTURES
+            )
         
         data = [
             {
