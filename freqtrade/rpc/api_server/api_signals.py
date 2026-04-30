@@ -101,8 +101,10 @@ def get_klines(symbol: str = "BTC/USDT:USDT", timeframe: str = "15m", limit: int
         
         exchange = rpc._freqtrade.exchange
         
+        from freqtrade.exchange import timeframe_to_seconds
+        
         # Estimate how many ms we need based on timeframe and limit
-        tf_ms = exchange.get_timeframe_value(timeframe) * 1000
+        tf_ms = timeframe_to_seconds(timeframe) * 1000
         # Fetch 2x more than limit to be safe, but at least 7 days for context
         needed_ms = max(tf_ms * limit * 2, 7 * 24 * 60 * 60 * 1000)
         since_ms = int((datetime.now(UTC) - timedelta(milliseconds=needed_ms)).timestamp() * 1000)
