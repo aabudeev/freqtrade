@@ -753,9 +753,36 @@ class SignalWorker:
                     if alt_key not in pos_map:
                         logger.warning(f"RECONCILE: Position for {trade.pair} missing on exchange. Marking trade as closed in DB.")
                         try:
+                            from datetime import UTC, datetime
                             ticker = self.bot.exchange.fetch_ticker(trade.pair)
                             close_price = ticker.get('last') or ticker.get('close') or trade.open_rate
-                            self.bot.handle_trade_exit(trade, close_price, "external_exit")
+                            
+                            # Manually close the trade in DB as it's already gone from exchange
+                            trade.is_open = False
+                            trade.close_date = datetime.now(UTC)
+                            trade.close_rate = close_price
+                            trade.exit_reason = "external_exit"
+                            trade.close_profit = trade.calculate_profit_ratio(close_price)
+                            from freqtrade.persistence import Trade
+                            Trade.commit()
+
+                            # Notify via RPC if possible
+                            if hasattr(self.bot, 'rpc'):
+                                from freqtrade.enums import RPCMessageType
+                                self.bot.rpc.send_msg({
+                                    'type': RPCMessageType.EXIT,
+                                    'trade_id': trade.id,
+                                    'pair': trade.pair,
+                                    'gain': 'profit' if trade.close_profit > 0 else 'loss',
+                                    'limit': close_price,
+                                    'amount': trade.amount,
+                                    'open_rate': trade.open_rate,
+                                    'close_rate': close_price,
+                                    'profit_amount': trade.close_profit_abs,
+                                    'profit_ratio': trade.close_profit,
+                                    'exit_reason': 'external_exit'
+                                })
+
                             self._update_signal_status_for_trade(trade, "closed(ext)")
                         except Exception as e_close:
                             logger.error(f"Error closing ghost trade {trade.pair}: {e_close}")
@@ -806,12 +833,14 @@ class SignalWorker:
         Periodically sync signal statuses with trade outcomes.
         """
         from freqtrade.persistence import Trade
+        import sqlite3
         try:
             conn = self.store._connect()
-            conn.row_factory = dict_factory
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM ingest_queue WHERE status = 'ordered'")
-            open_signals = cursor.fetchall()
+            open_signals_raw = cursor.fetchall()
+            open_signals = [dict(r) for r in open_signals_raw]
             conn.close()
 
             for sig in open_signals:
