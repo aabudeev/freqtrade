@@ -375,13 +375,13 @@ class SignalWorker:
 
                                     if tp_price:
                                         exit_side = trade.exit_side
-                                        tp_order = self.bot.exchange.create_order(
-                                            pair=trade.pair,
-                                            ordertype="limit",
+                                        # Use direct CCXT API to avoid Freqtrade wrapper argument issues
+                                        tp_order = self.bot.exchange._api.create_order(
+                                            symbol=trade.pair,
+                                            type="limit",
                                             side=exit_side,
                                             amount=trade.amount,
                                             price=tp_price,
-                                            leverage=trade.leverage,
                                             params={"reduceOnly": True}
                                         )
                                         logger.info(f"TP order placed on exchange: {tp_price} (id={tp_order.get('id', '?')})")
@@ -392,13 +392,12 @@ class SignalWorker:
                                         logger.warning("Signal TP failed. Trying automatic TP fallback...")
                                         auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
                                         try:
-                                            self.bot.exchange.create_order(
-                                                pair=trade.pair,
-                                                ordertype="limit",
+                                            self.bot.exchange._api.create_order(
+                                                symbol=trade.pair,
+                                                type="limit",
                                                 side=exit_side,
                                                 amount=trade.amount,
                                                 price=auto_tp_price,
-                                                leverage=trade.leverage,
                                                 params={"reduceOnly": True}
                                             )
                                             logger.info(f"Auto TP fallback placed: {auto_tp_price}")
@@ -759,13 +758,12 @@ class SignalWorker:
                     if not tp_order_exists:
                         logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
                         exit_side = trade.exit_side
-                        self.bot.exchange.create_order(
-                            pair=trade.pair,
-                            ordertype="limit",
+                        self.bot.exchange._api.create_order(
+                            symbol=trade.pair,
+                            type="limit",
                             side=exit_side,
                             amount=trade.amount,
                             price=tp_price,
-                            leverage=trade.leverage,
                             params={"reduceOnly": True}
                         )
                         logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
