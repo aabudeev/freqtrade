@@ -154,6 +154,32 @@ class SignalQueueStore:
                 con.commit()
                 return [dict(r) for r in rows]
 
+    def reset_stuck_signals(self, timeout_seconds: int = 120) -> int:
+        """
+        Resets signals stuck in 'processing' status for too long back to 'pending'.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        with self._lock:
+            with self._connect() as con:
+                # Find signals updated more than timeout_seconds ago
+                cursor = con.execute("SELECT idempotency_key, updated_at FROM ingest_queue WHERE status = 'processing'")
+                rows = cursor.fetchall()
+                count = 0
+                for row in rows:
+                    key, upd_str = row
+                    try:
+                        upd_dt = datetime.fromisoformat(upd_str)
+                        if (now - upd_dt).total_seconds() > timeout_seconds:
+                            con.execute(
+                                "UPDATE ingest_queue SET status = 'pending', updated_at = ? WHERE idempotency_key = ?",
+                                (now.isoformat(), key)
+                            )
+                            count += 1
+                    except Exception:
+                        continue
+                con.commit()
+                return count
+
     def mark_status(self, idempotency_key: str, status: str, error_message: str | None = None) -> None:
         """
         Updates record status (e.g., 'parsed', 'failed', 'sent').

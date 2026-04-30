@@ -869,6 +869,9 @@ class SignalWorker:
         last_diag = 0
         while not self._stop_event.is_set():
             try:
+                # Reset any signals stuck in 'processing' (e.g. after crash)
+                self.store.reset_stuck_signals()
+                
                 self.process_once()
                 
                 now = time.time()
