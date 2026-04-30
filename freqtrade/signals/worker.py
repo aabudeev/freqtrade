@@ -813,25 +813,22 @@ class SignalWorker:
             cursor.execute("SELECT * FROM ingest_queue WHERE status = 'ordered'")
             open_signals = cursor.fetchall()
             conn.close()
-        except Exception as e:
-            logger.error(f"Error fetching open signals for sync: {e}")
-            return
 
-        for sig in open_signals:
-            tag = f"telegram_telegram:{sig['channel_id']}:{sig['msg_id']}"
-            trade = Trade.get_trades([Trade.enter_tag == tag]).first()
-            if trade:
-                if not trade.is_open:
-                    reason = trade.exit_reason or "exit"
-                    new_status = f"closed({reason})"
-                    self.store.update_signal_status(sig['msg_id'], new_status)
-                    logger.info(f"SYNC: Updated signal {sig['msg_id']} status to {new_status}")
-            else:
-                # If signal is older than 24h and no trade, mark as expired
-                import datetime
-                occ = datetime.datetime.fromisoformat(sig['occurred_at'])
-                if (datetime.datetime.now() - occ).total_seconds() > 86400:
-                    self.store.update_signal_status(sig['msg_id'], "expired")
+            for sig in open_signals:
+                tag = f"telegram_telegram:{sig['channel_id']}:{sig['msg_id']}"
+                trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+                if trade:
+                    if not trade.is_open:
+                        reason = trade.exit_reason or "exit"
+                        new_status = f"closed({reason})"
+                        self.store.update_signal_status(sig['msg_id'], new_status)
+                        logger.info(f"SYNC: Updated signal {sig['msg_id']} status to {new_status}")
+                else:
+                    # If signal is older than 24h and no trade, mark as expired
+                    import datetime
+                    occ = datetime.datetime.fromisoformat(sig['occurred_at'])
+                    if (datetime.datetime.now() - occ).total_seconds() > 86400:
+                        self.store.update_signal_status(sig['msg_id'], "expired")
         except Exception as e:
             logger.error(f"Global status sync error: {e}")
 
