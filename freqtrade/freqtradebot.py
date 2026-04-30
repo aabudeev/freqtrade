@@ -251,7 +251,10 @@ class FreqtradeBot(LoggingMixin):
         if getattr(self, "exchange", None):
             self.exchange.close()
         try:
-            Trade.commit()
+            if hasattr(Trade, 'session'):
+                Trade.commit()
+            else:
+                logger.debug("Skipping Trade.commit() - session not initialized.")
         except Exception:
             # Exceptions here will be happening if the db disappeared.
             # At which point we can no longer commit anyway.
