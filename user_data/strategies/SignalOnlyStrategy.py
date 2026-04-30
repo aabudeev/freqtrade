@@ -30,7 +30,7 @@ class SignalOnlyStrategy(IStrategy):
     
     # TRAILING STOP DISABLED
     trailing_stop = False
-    use_custom_stoploss = True
+    use_custom_stoploss = False
     process_only_new_candles = False
     use_exit_signal = False
     startup_candle_count = 20
@@ -64,22 +64,6 @@ class SignalOnlyStrategy(IStrategy):
         dataframe.loc[:, "exit_long"] = 0
         dataframe.loc[:, "exit_short"] = 0
         return dataframe
-
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, **kwargs) -> float:
-        """
-        Strictly use the stoploss price set during entry.
-        No trailing, no adjustments.
-        """
-        if trade.stop_loss:
-            # Calculate relative stoploss based on current rate
-            if not trade.is_short:
-                return (trade.stop_loss / current_rate) - 1
-            else:
-                return 1 - (trade.stop_loss / current_rate)
-        
-        # Fallback to -15% if something is totally wrong
-        return -0.15
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:

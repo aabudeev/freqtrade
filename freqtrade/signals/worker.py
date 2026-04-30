@@ -267,13 +267,11 @@ class SignalWorker:
                                     trade.stop_loss = sl_price
                                     trade.set_custom_data("signal_sl", str(sl_price))
                                     if trade.open_rate:
-                                        if not trade.is_short:
-                                            trade.stop_loss_pct = (sl_price / trade.open_rate) - 1
-                                        else:
-                                            trade.stop_loss_pct = (trade.open_rate - sl_price) / trade.open_rate
-                                        
-                                        if trade.stop_loss_pct > 0:
-                                            trade.stop_loss_pct = -trade.stop_loss_pct
+                                        # Freqtrade uses 'stoploss' field for the relative percentage from open rate
+                                        # It should be a negative value (e.g. -0.05 for 5% loss)
+                                        sl_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
+                                        trade.stoploss = -sl_ratio
+                                        trade.stop_loss_pct = -sl_ratio
                                     
                                     Trade.commit()
                                     
@@ -325,10 +323,9 @@ class SignalWorker:
                                             self.bot.create_stoploss_order(trade, auto_sl_price)
                                             logger.info(f"Auto SL order placed on exchange: {auto_sl_price}")
                                             trade.stop_loss = auto_sl_price
-                                            if not trade.is_short:
-                                                trade.stop_loss_pct = (auto_sl_price / trade.open_rate) - 1
-                                            else:
-                                                trade.stop_loss_pct = (trade.open_rate - auto_sl_price) / trade.open_rate
+                                            sl_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
+                                            trade.stoploss = -sl_ratio
+                                            trade.stop_loss_pct = -sl_ratio
                                         except Exception as e2:
                                             logger.error(f"Failed to place auto SL on exchange: {e2}")
                                             logger.warning("Both SL attempts failed. Freqtrade will retry SL placement in its main loop.")
@@ -336,10 +333,9 @@ class SignalWorker:
                                     # No SL in signal, calculate auto SL
                                     auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
                                     trade.stop_loss = auto_sl_price
-                                    if not trade.is_short:
-                                        trade.stop_loss_pct = (auto_sl_price / trade.open_rate) - 1
-                                    else:
-                                        trade.stop_loss_pct = (trade.open_rate - auto_sl_price) / trade.open_rate
+                                    sl_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
+                                    trade.stoploss = -sl_ratio
+                                    trade.stop_loss_pct = -sl_ratio
                                     
                                     Trade.commit()
                                     try:
