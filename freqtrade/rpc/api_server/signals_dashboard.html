@@ -118,17 +118,20 @@
             font-size: 0.8rem;
         }
 
+        .status-active   { color: #3b82f6; font-weight: bold; text-shadow: 0 0 8px rgba(59, 130, 246, 0.5); }
         .status-failed   { color: #f6465d; }
         .status-waiting  { color: #f59e0b; }
         .status-skipped  { color: #94a3b8; }
         .status-ordered  { color: #3b82f6; }
-        .status-closed-tp { color: #0ebd73; }
-        .status-closed-sl { color: #f6465d; }
-        .status-pending  { color: #f59e0b; }
-        .status-sent     { color: #3b82f6; }
-        .status-open-exchange { color: #0ebd73; }
-        .status-waiting_ta { color: #f59e0b; }
-        .status-processing { color: #f59e0b; }
+        .status-closed   { color: #0ebd73; }
+        .status-expired  { color: #64748b; }
+        .status-processing { color: #f59e0b; animation: pulse 1.5s infinite; }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
 
         .error-text {
             display: block;
@@ -721,23 +724,23 @@
         }
 
         function getStatusHtml(status) {
-            // Status map: status string -> class and label
-            const map = {
-                'failed':    ['status-failed',    '❌ failed'],
-                'waiting':   ['status-waiting',   '⏳ waiting'],
-                'skipped':   ['status-skipped',   '⏹ skipped'],
-                'ordered':   ['status-ordered',   '🟦 ordered'],
-                'sent':      ['status-ordered',   '🟦 ordered'], // 'sent' is what worker saves
-                'closed_tp': ['status-closed-tp', '✅ closed (TP)'],
-                'closed_sl': ['status-closed-sl', '❌ closed (SL)'],
-                'pending':   ['status-pending',   '⏳ pending'],
-                'open_exchange': ['status-open-exchange', '🟢 open (exchange)'],
-                'waiting_ta': ['status-waiting_ta', '⏳ waiting TA'],
-                'processing': ['status-processing', '⚙️ processing'],
-                'parsed':    ['status-pending',   '⏳ waiting'],
-            };
-            const [cls, label] = map[status] || ['status-skipped', status];
-            return `<span class="status-badge ${cls}">${label}</span>`;
+            if (!status) return `<span class="status-badge">Unknown</span>`;
+            
+            const s = status.toLowerCase();
+            if (s === 'active') return `<span class="status-badge status-active">● active</span>`;
+            if (s.startsWith('closed')) {
+                const reason = status.match(/\((.*)\)/)?.[1] || 'exit';
+                let icon = '🏁';
+                if (reason.includes('TP')) icon = '💰';
+                if (reason.includes('SL')) icon = '🛑';
+                return `<span class="status-badge status-closed">${icon} ${reason}</span>`;
+            }
+            if (s === 'expired') return `<span class="status-badge status-expired">⌛ expired</span>`;
+            if (s === 'failed') return `<span class="status-badge status-failed">❌ failed</span>`;
+            if (s === 'processing') return `<span class="status-badge status-processing">⚙️ processing</span>`;
+            if (s === 'sent' || s === 'ordered') return `<span class="status-badge status-ordered">🟦 ordered</span>`;
+            
+            return `<span class="status-badge status-waiting">⏳ ${status}</span>`;
         }
 
         function renderTable(signals) {
@@ -828,25 +831,22 @@
             priceLines.forEach(l => lineSeries.removePriceLine(l));
             priceLines = [];
 
-            const MAX_RETRIES = 2;
-            let lastErr = null;
+            const MAX_RETRIES = 3;
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const res = await apiFetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=800`);
+                    const res = await apiFetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=1000`);
                     const resJson = await res.json();
 
                     if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
                         const candles = resJson.data;
                         lineSeries.setData(candles);
                         
-                        // Fit content to show all candles initially
-                        chart.timeScale().fitContent();
                         // Dynamic Precision for price axis
-                        const firstPrice = candles[0].close;
+                        const lastPrice = candles[candles.length - 1].close;
                         let precision = 2;
-                        if (firstPrice < 0.001) precision = 8;
-                        else if (firstPrice < 0.1) precision = 6;
-                        else if (firstPrice < 10) precision = 4;
+                        if (lastPrice < 0.01) precision = 8;
+                        else if (lastPrice < 0.1) precision = 6;
+                        else if (lastPrice < 10) precision = 4;
                         
                         lineSeries.applyOptions({
                             priceFormat: {
@@ -856,49 +856,53 @@
                             },
                         });
 
-                        // Add Entry Marker (B/S)
+                        // Markers (Stickers)
+                        const markers = [];
                         if (occurred_at) {
                             let occTime = new Date(occurred_at).getTime() / 1000;
-                            // Find the candle for this time or the one right after
-                            let markerTime = candles.find(c => c.time >= occTime);
-                            if (markerTime) {
+                            let entryCandle = candles.find(c => c.time >= occTime);
+                            if (entryCandle) {
                                 const isShort = type === 'SHORT';
-                                lineSeries.setMarkers([{
-                                    time: markerTime.time,
+                                markers.push({
+                                    time: entryCandle.time,
                                     position: isShort ? 'aboveBar' : 'belowBar',
                                     color: isShort ? '#f6465d' : '#0ebd73',
                                     shape: isShort ? 'arrowDown' : 'arrowUp',
-                                    text: isShort ? 'S' : 'B'
-                                }]);
+                                    text: isShort ? 'ENTRY (S)' : 'ENTRY (B)'
+                                });
                             }
                         }
 
-                        // Add Exit Marker if closed
+                        // Add Exit marker if it's closed
                         if (status && status.includes('closed')) {
-                            // TODO: If we had exit time, we could add another marker
+                            markers.push({
+                                time: candles[candles.length - 1].time,
+                                position: 'aboveBar',
+                                color: '#94a3b8',
+                                shape: 'arrowDown',
+                                text: 'EXIT'
+                            });
                         }
-                    } else {
-                        console.error('klines error:', resJson);
-                        if (attempt < MAX_RETRIES - 1) continue;
-                    }
+                        lineSeries.setMarkers(markers);
 
-                    // TP/SL Lines
-                    if (tp && tp !== '--') {
-                        const l = lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
-                        priceLines.push(l);
+                        // TP/SL Lines
+                        if (tp && tp !== '--') {
+                            const l = lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'TP' });
+                            priceLines.push(l);
+                        }
+                        if (sl && sl !== '--') {
+                            const l = lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'SL' });
+                            priceLines.push(l);
+                        }
+
+                        chart.timeScale().fitContent();
+                        return; // success
                     }
-                    if (sl && sl !== '--') {
-                        const l = lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
-                        priceLines.push(l);
-                    }
-                    return; // success
                 } catch (err) {
-                    lastErr = err;
                     console.warn(`klines attempt ${attempt + 1} failed:`, err);
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
-            console.error('Error loading chart data after retries:', lastErr);
         }
 
         function closeChart() {

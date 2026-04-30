@@ -830,8 +830,9 @@ class SignalWorker:
         if not trade.enter_tag:
             return
         # Tag format: telegram_telegram:1566432615:13346
-        sig_id = trade.enter_tag.split(':')[-1]
-        self.store.update_signal_status(sig_id, status_prefix)
+        # The store expects the idempotency_key (telegram:1566432615:13346)
+        sig_key = trade.enter_tag.replace('telegram_', '', 1)
+        self.store.mark_status(sig_key, status_prefix)
 
     def _sync_signal_statuses(self):
         """
@@ -843,15 +844,22 @@ class SignalWorker:
             conn = self.store._connect()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            # Sync anything that is not yet in a final state
-            cursor.execute("SELECT * FROM ingest_queue WHERE status IN ('ordered', 'active', 'processing')")
+            # Sync anything that is not in a final success/expired state
+            cursor.execute("SELECT * FROM ingest_queue WHERE status NOT IN ('closed(TP)', 'closed(SL)', 'closed(ext)', 'expired', 'skipped')")
             open_signals_raw = cursor.fetchall()
             open_signals = [dict(r) for r in open_signals_raw]
             conn.close()
 
             for sig in open_signals:
-                tag = f"telegram_telegram:{sig['channel_id']}:{sig['msg_id']}"
-                trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+                # Trade tag is telegram_ + idempotency_key
+                tag = f"telegram_{sig['idempotency_key']}"
+                
+                # Use direct session query for maximum reliability
+                try:
+                    trade = Trade.session.query(Trade).filter(Trade.enter_tag == tag).first()
+                except Exception as e_db:
+                    logger.error(f"SYNC: DB error looking up trade for {tag}: {e_db}")
+                    continue
                 
                 new_status = None
                 if trade:
@@ -862,22 +870,19 @@ class SignalWorker:
                         reason = trade.exit_reason or "exit"
                         new_status = f"closed({reason})"
                 else:
-                    # No trade found for this signal. 
-                    # If it's been 'ordered' or 'active' for a while, it might be a ghost
+                    # No trade found. 
                     import datetime
                     occ = datetime.datetime.fromisoformat(sig['occurred_at'])
                     age_min = (datetime.datetime.now() - occ).total_seconds() / 60
                     
-                    if sig['status'] in ('ordered', 'active') and age_min > 30:
-                        # Signal marked as ordered/active but no trade in DB for 30+ mins
+                    if sig['status'] in ('ordered', 'active') and age_min > 20:
                         new_status = "expired"
-                    elif sig['status'] == 'processing' and age_min > 5:
-                        # Handled by reset_stuck_signals normally, but as backup:
-                        new_status = "pending"
+                    elif sig['status'] == 'failed' and age_min > 240: # 4 hours
+                        new_status = "expired"
 
                 if new_status and new_status != sig['status']:
-                    self.store.update_signal_status(sig['msg_id'], new_status)
-                    logger.info(f"SYNC: Updated signal {sig['msg_id']} status from {sig['status']} to {new_status}")
+                    self.store.mark_status(sig['idempotency_key'], new_status)
+                    logger.info(f"SYNC: Updated signal {sig['idempotency_key']} status to {new_status}")
                     
         except Exception as e:
             logger.error(f"Global status sync error: {e}")
