@@ -768,7 +768,7 @@
                     <td style="color: #f6465d;">${p.sl}</td>
                     <td class="val-muted">${dateStr}</td>
                     <td>${getStatusHtml(sig.status)}</td>
-                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}')">открыть</button></td>
+                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}', '${sig.occurred_at}', '${sig.status}')">открыть</button></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -776,10 +776,11 @@
 
         let chart;
         let lineSeries;
-        let currentChartState = null; // { coin, type, entryStr, tp, sl, tf }
+        let priceLines = [];
+        let currentChartState = null; // { coin, type, entryStr, tp, sl, tf, occurred_at, status }
 
-        async function openChart(coin, type, entryStr, tp, sl) {
-            currentChartState = { coin, type, entryStr, tp, sl, tf: '15m' };
+        async function openChart(coin, type, entryStr, tp, sl, occurred_at, status) {
+            currentChartState = { coin, type, entryStr, tp, sl, tf: '15m', occurred_at, status };
             _setActiveTfBtn('15m');
             document.getElementById('chart-title').innerText = `${coin}USDT - ${type}`;
             document.getElementById('chart-modal').style.display = 'flex';
@@ -821,37 +822,80 @@
 
         async function loadChartData() {
             if (!currentChartState || !chart) return;
-            const { coin, tp, sl, tf } = currentChartState;
+            const { coin, type, entryStr, tp, sl, tf, occurred_at, status } = currentChartState;
 
-            // Rebuild only candles (keep price lines fresh)
-            lineSeries.setData([]);
+            // Clear old price lines
+            priceLines.forEach(l => lineSeries.removePriceLine(l));
+            priceLines = [];
 
             const MAX_RETRIES = 2;
             let lastErr = null;
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const res = await apiFetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=200`);
+                    const res = await apiFetch(`/api/v1/klines?symbol=${coin}/USDT:USDT&timeframe=${tf}&limit=800`);
                     const resJson = await res.json();
 
                     if (resJson.code === 0 && resJson.data && resJson.data.length > 0) {
-                        lineSeries.setData(resJson.data);
+                        const candles = resJson.data;
+                        lineSeries.setData(candles);
+                        
+                        // Fit content to show all candles initially
+                        chart.timeScale().fitContent();
+                        // Dynamic Precision for price axis
+                        const firstPrice = candles[0].close;
+                        let precision = 2;
+                        if (firstPrice < 0.001) precision = 8;
+                        else if (firstPrice < 0.1) precision = 6;
+                        else if (firstPrice < 10) precision = 4;
+                        
+                        lineSeries.applyOptions({
+                            priceFormat: {
+                                type: 'price',
+                                precision: precision,
+                                minMove: 1 / Math.pow(10, precision),
+                            },
+                        });
+
+                        // Add Entry Marker (B/S)
+                        if (occurred_at) {
+                            let occTime = new Date(occurred_at).getTime() / 1000;
+                            // Find the candle for this time or the one right after
+                            let markerTime = candles.find(c => c.time >= occTime);
+                            if (markerTime) {
+                                const isShort = type === 'SHORT';
+                                lineSeries.setMarkers([{
+                                    time: markerTime.time,
+                                    position: isShort ? 'aboveBar' : 'belowBar',
+                                    color: isShort ? '#f6465d' : '#0ebd73',
+                                    shape: isShort ? 'arrowDown' : 'arrowUp',
+                                    text: isShort ? 'S' : 'B'
+                                }]);
+                            }
+                        }
+
+                        // Add Exit Marker if closed
+                        if (status && status.includes('closed')) {
+                            // TODO: If we had exit time, we could add another marker
+                        }
                     } else {
                         console.error('klines error:', resJson);
                         if (attempt < MAX_RETRIES - 1) continue;
                     }
 
-                    // Thin price lines — TP green, SL red
+                    // TP/SL Lines
                     if (tp && tp !== '--') {
-                        lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
+                        const l = lineSeries.createPriceLine({ price: parseFloat(tp), color: '#0ebd73', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP' });
+                        priceLines.push(l);
                     }
                     if (sl && sl !== '--') {
-                        lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
+                        const l = lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL' });
+                        priceLines.push(l);
                     }
                     return; // success
                 } catch (err) {
                     lastErr = err;
                     console.warn(`klines attempt ${attempt + 1} failed:`, err);
-                    await new Promise(r => setTimeout(r, 1000)); // wait 1s before retry
+                    await new Promise(r => setTimeout(r, 1000));
                 }
             }
             console.error('Error loading chart data after retries:', lastErr);
