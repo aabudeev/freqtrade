@@ -436,8 +436,13 @@ class SignalWorker:
                     pass
 
                 err_msg = str(e)
+                is_network_issue = any(x in err_msg.lower() for x in ["network", "timeout", "connection reset", "109400", "timestamp is invalid"])
+                
                 if "trader is not running" in err_msg.lower():
                     logger.warning(f"Bot is not in RUNNING state while processing {key}. Returning to pending.")
+                    self.store.mark_status(key, "pending")
+                elif is_network_issue:
+                    logger.warning(f"Network issue while processing {key} ({err_msg}). Returning to pending for retry.")
                     self.store.mark_status(key, "pending")
                 else:
                     logger.exception(f"Exception during signal parsing/execution for {key}")
@@ -838,7 +843,8 @@ class SignalWorker:
             conn = self.store._connect()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM ingest_queue WHERE status = 'ordered'")
+            # Sync anything that is not yet in a final state
+            cursor.execute("SELECT * FROM ingest_queue WHERE status IN ('ordered', 'active', 'processing')")
             open_signals_raw = cursor.fetchall()
             open_signals = [dict(r) for r in open_signals_raw]
             conn.close()
@@ -846,18 +852,33 @@ class SignalWorker:
             for sig in open_signals:
                 tag = f"telegram_telegram:{sig['channel_id']}:{sig['msg_id']}"
                 trade = Trade.get_trades([Trade.enter_tag == tag]).first()
+                
+                new_status = None
                 if trade:
-                    if not trade.is_open:
+                    if trade.is_open:
+                        if sig['status'] != 'active':
+                            new_status = "active"
+                    else:
                         reason = trade.exit_reason or "exit"
                         new_status = f"closed({reason})"
-                        self.store.update_signal_status(sig['msg_id'], new_status)
-                        logger.info(f"SYNC: Updated signal {sig['msg_id']} status to {new_status}")
                 else:
-                    # If signal is older than 24h and no trade, mark as expired
+                    # No trade found for this signal. 
+                    # If it's been 'ordered' or 'active' for a while, it might be a ghost
                     import datetime
                     occ = datetime.datetime.fromisoformat(sig['occurred_at'])
-                    if (datetime.datetime.now() - occ).total_seconds() > 86400:
-                        self.store.update_signal_status(sig['msg_id'], "expired")
+                    age_min = (datetime.datetime.now() - occ).total_seconds() / 60
+                    
+                    if sig['status'] in ('ordered', 'active') and age_min > 30:
+                        # Signal marked as ordered/active but no trade in DB for 30+ mins
+                        new_status = "expired"
+                    elif sig['status'] == 'processing' and age_min > 5:
+                        # Handled by reset_stuck_signals normally, but as backup:
+                        new_status = "pending"
+
+                if new_status and new_status != sig['status']:
+                    self.store.update_signal_status(sig['msg_id'], new_status)
+                    logger.info(f"SYNC: Updated signal {sig['msg_id']} status from {sig['status']} to {new_status}")
+                    
         except Exception as e:
             logger.error(f"Global status sync error: {e}")
 
