@@ -820,9 +820,10 @@ class SignalWorker:
                     
                     tp_order_exists = False
                     for order in open_orders:
+                        # On BingX, TP orders can have types like 'limit', 'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT'
+                        # We do a loose check based on side and price
                         if order['side'] == trade.exit_side and \
-                           order['type'] == 'limit' and \
-                           abs(float(order['price']) - tp_price) / tp_price < 0.0001:
+                           abs(float(order['price'] or 0) - tp_price) / tp_price < 0.0001:
                             tp_order_exists = True
                             break
                     
