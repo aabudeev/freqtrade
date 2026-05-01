@@ -830,16 +830,23 @@ class SignalWorker:
                     if not tp_order_exists:
                         # CRITICAL: Only place reduceOnly TP if position actually exists
                         if trade.pair in pos_map:
-                            logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
-                            self.bot.exchange._api.create_order(
-                                symbol=trade.pair,
-                                type="limit",
-                                side=trade.exit_side,
-                                amount=trade.amount,
-                                price=tp_price,
-                                params={"reduceOnly": True}
-                            )
-                            logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                            try:
+                                logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
+                                self.bot.exchange._api.create_order(
+                                    symbol=trade.pair,
+                                    type="limit",
+                                    side=trade.exit_side,
+                                    amount=trade.amount,
+                                    price=tp_price,
+                                    params={"reduceOnly": True}
+                                )
+                                logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                            except Exception as e_place:
+                                if "101290" in str(e_place):
+                                    logger.info(f"RECONCILE: TP for {trade.pair} already handled by exchange (ReduceOnly limit).")
+                                    # We can assume it exists in some form (e.g. as trigger order)
+                                else:
+                                    logger.error(f"RECONCILE: Failed to place TP for {trade.pair}: {e_place}")
                         else:
                             logger.debug(f"RECONCILE: Skipping TP for {trade.pair} - position not yet open on exchange.")
                 except Exception as e:
