@@ -136,6 +136,18 @@ class SignalWorker:
                         continue
 
                     logger.info(f"Signal {key} successfully parsed: {event}")
+                    
+                    # Update symbol in DB if it was missing
+                    if not row.get('symbol'):
+                        try:
+                            with self.store._connect() as con:
+                                # Remove :USDT suffix for DB storage to match existing convention if needed
+                                clean_sym = event.symbol.split('/')[0] if '/' in event.symbol else event.symbol
+                                con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (clean_sym, key))
+                                con.commit()
+                        except Exception as e_db:
+                            logger.warning(f"Failed to update symbol in DB for {key}: {e_db}")
+
                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                         self.bot.rpc.send_msg({
                             'type': RPCMessageType.STATUS,
@@ -411,19 +423,23 @@ class SignalWorker:
                                 
                         elif event.type in (SignalType.TAKE_PROFIT, SignalType.STOP_LOSS):
                             from freqtrade.persistence import Trade
-                            # Search for open trade for this coin
+                            # Find open trade for this pair
+                            # We check both exact match and without :USDT suffix
                             trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
-                            if trade and trade.is_open:
-                                try:
-                                    self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
-                                    logger.info(f"Closed Trade {trade.id} via signal {key}")
-                                    self.store.mark_status(key, "sent")
-                                except Exception as e:
-                                    logger.warning(f"Failed to force exit trade {trade.id} (maybe already closed): {e}")
-                                    self.store.mark_status(key, "failed", str(e))
+                            if not trade:
+                                # Try simple match (e.g. ARB/USDT instead of ARB/USDT:USDT)
+                                alt_pair = event.symbol.split(':')[0] if ':' in event.symbol else event.symbol
+                                trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == alt_pair]).first()
+                            
+                            if trade:
+                                logger.info(f"Signal {event.type.name} for {event.symbol}. Manual exit triggered for trade {trade.id}.")
+                                # Use rpc exit for clean execution
+                                self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                                self.store.mark_status(key, "active")
+                                logger.info(f"Trade {trade.id} ({trade.pair}) exit command sent via RPC due to channel signal.")
                             else:
-                                logger.info(f"Trade for exit {event.symbol} already closed or not found. Skipping.")
-                                self.store.mark_status(key, "skipped", "Open trade not found for exit")
+                                logger.info(f"Signal {event.type.name} for {event.symbol}, but no open trade found. Skipping.")
+                                self.store.mark_status(key, "skipped", "No open trade for this symbol")
                     else:
                         # In tests or if bot is not passed
                         self.store.mark_status(key, "parsed")
@@ -811,16 +827,20 @@ class SignalWorker:
                             break
                     
                     if not tp_order_exists:
-                        logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
-                        self.bot.exchange._api.create_order(
-                            symbol=trade.pair,
-                            type="limit",
-                            side=trade.exit_side,
-                            amount=trade.amount,
-                            price=tp_price,
-                            params={"reduceOnly": True}
-                        )
-                        logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                        # CRITICAL: Only place reduceOnly TP if position actually exists
+                        if trade.pair in pos_map:
+                            logger.info(f"RECONCILE: TP order missing for {trade.pair} at {tp_price}. Placing now.")
+                            self.bot.exchange._api.create_order(
+                                symbol=trade.pair,
+                                type="limit",
+                                side=trade.exit_side,
+                                amount=trade.amount,
+                                price=tp_price,
+                                params={"reduceOnly": True}
+                            )
+                            logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                        else:
+                            logger.debug(f"RECONCILE: Skipping TP for {trade.pair} - position not yet open on exchange.")
                 except Exception as e:
                     logger.error(f"Error during TP reconciliation for {trade.pair}: {e}")
         except Exception as ge:

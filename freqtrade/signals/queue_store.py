@@ -85,7 +85,11 @@ class SignalQueueStore:
                     import re
                     symbol = None
                     # Look for something like BTC/USDT or just BTC in context of "Coin:" or "Pair:"
+                    # OR look for "COIN - тейк/стоп" format
                     m = re.search(r'(?:Монета|Pair):\s*([A-Z0-9/:-]+)', event.text, re.I)
+                    if not m:
+                        m = re.search(r'^\s*([A-Z0-9]+)\s*-\s*(?:тейк|стоп)', event.text, re.I | re.M)
+                    
                     if m:
                         symbol = m.group(1).strip().upper()
 

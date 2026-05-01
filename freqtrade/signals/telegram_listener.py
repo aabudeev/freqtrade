@@ -125,32 +125,37 @@ class TelegramSignalsListener:
                 try:
                     if not event.message:
                         return
-                    d = event.message.to_dict()
-                    ev = message_dict_to_ingest_event(d)
-                    if ev is None:
-                        return
-                    if self._store.enqueue(ev):
-                        logger.info("Signals queue: enqueued %s", ev.idempotency_key)
+                    await self._ingest_message(event.message)
                 except Exception:
                     logger.exception("Signals queue handler failed")
 
             self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
             logger.info("Telegram signals listener connected (peer %s)", peer)
 
-            # Sync history (last 50 messages) in case the bot was offline
-            logger.info("Loading signal history (last 50 messages)...")
-            async for msg in self._client.iter_messages(entity, limit=50):
-                try:
-                    if not msg:
-                        continue
-                    d = msg.to_dict()
-                    ev = message_dict_to_ingest_event(d)
-                    if ev and self._store.enqueue(ev):
-                        logger.info("Signals queue (history): enqueued %s", ev.idempotency_key)
-                except Exception:
-                    logger.exception("Error importing message from history")
+            # Sync history (last 50 messages) on startup
+            logger.info("Loading signal history on startup...")
+            await self._sync_history(entity)
 
-            await self._client.run_until_disconnected()
+            # --- PERIODIC SYNC TASK ---
+            # To prevent missing messages during proxy drops
+            async def periodic_sync():
+                while self._running:
+                    await asyncio.sleep(120) # Every 2 minutes
+                    try:
+                        if self._client and self._client.is_connected():
+                            logger.debug("Periodic signal history sync starting...")
+                            await self._sync_history(entity, limit=20)
+                    except Exception as e:
+                        logger.warning(f"Periodic history sync failed: {e}")
+
+            # Start periodic sync as a background task
+            sync_task = asyncio.create_task(periodic_sync())
+            
+            try:
+                await self._client.run_until_disconnected()
+            finally:
+                sync_task.cancel()
+
         finally:
             if self._client:
                 try:
@@ -158,6 +163,22 @@ class TelegramSignalsListener:
                 except Exception:
                     pass
                 self._client = None
+
+    async def _ingest_message(self, msg) -> None:
+        from freqtrade.signals.telethon_message import message_dict_to_ingest_event
+        try:
+            d = msg.to_dict()
+            ev = message_dict_to_ingest_event(d)
+            if ev and self._store.enqueue(ev):
+                logger.info("Signals queue: enqueued %s (from %s)", ev.idempotency_key, ev.occurred_at)
+        except Exception:
+            logger.exception("Error ingesting message")
+
+    async def _sync_history(self, entity, limit=50) -> None:
+        async for msg in self._client.iter_messages(entity, limit=limit):
+            if not msg:
+                continue
+            await self._ingest_message(msg)
 
     def shutdown(self) -> None:
         self._running = False
