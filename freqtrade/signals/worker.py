@@ -433,10 +433,20 @@ class SignalWorker:
                             
                             if trade:
                                 logger.info(f"Signal {event.type.name} for {event.symbol}. Manual exit triggered for trade {trade.id}.")
-                                # Use rpc exit for clean execution
-                                self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
-                                self.store.mark_status(key, "active")
-                                logger.info(f"Trade {trade.id} ({trade.pair}) exit command sent via RPC due to channel signal.")
+                                try:
+                                    # Use rpc exit for clean execution
+                                    self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                                    self.store.mark_status(key, "active")
+                                    logger.info(f"Trade {trade.id} ({trade.pair}) exit command sent via RPC.")
+                                except Exception as e_exit:
+                                    # Refresh trade from DB to see if it actually closed
+                                    Trade.session.refresh(trade)
+                                    if not trade.is_open:
+                                        logger.info(f"Trade {trade.id} closed successfully despite RPC error (likely SL cleanup lag): {e_exit}")
+                                        self.store.mark_status(key, "active")
+                                    else:
+                                        logger.error(f"Manual exit failed for trade {trade.id}: {e_exit}")
+                                        self.store.mark_status(key, "failed", str(e_exit))
                             else:
                                 logger.info(f"Signal {event.type.name} for {event.symbol}, but no open trade found. Skipping.")
                                 self.store.mark_status(key, "skipped", "No open trade for this symbol")
