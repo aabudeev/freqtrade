@@ -810,6 +810,9 @@ class SignalWorker:
                         continue
 
                 # 2. Check if TP order exists
+                if trade.get_custom_data("tp_reconciled") == "1":
+                    continue
+
                 tp_price_str = trade.get_custom_data("signal_tp")
                 if not tp_price_str:
                     continue
@@ -841,14 +844,24 @@ class SignalWorker:
                                     params={"reduceOnly": True}
                                 )
                                 logger.info(f"RECONCILE: TP order placed for {trade.pair} at {tp_price}")
+                                trade.set_custom_data("tp_reconciled", "1")
+                                from freqtrade.persistence import Trade
+                                Trade.commit()
                             except Exception as e_place:
                                 if "101290" in str(e_place):
                                     logger.info(f"RECONCILE: TP for {trade.pair} already handled by exchange (ReduceOnly limit).")
-                                    # We can assume it exists in some form (e.g. as trigger order)
+                                    trade.set_custom_data("tp_reconciled", "1")
+                                    from freqtrade.persistence import Trade
+                                    Trade.commit()
                                 else:
                                     logger.error(f"RECONCILE: Failed to place TP for {trade.pair}: {e_place}")
                         else:
                             logger.debug(f"RECONCILE: Skipping TP for {trade.pair} - position not yet open on exchange.")
+                    else:
+                        # Order exists, mark as reconciled to stop checking
+                        trade.set_custom_data("tp_reconciled", "1")
+                        from freqtrade.persistence import Trade
+                        Trade.commit()
                 except Exception as e:
                     logger.error(f"Error during TP reconciliation for {trade.pair}: {e}")
         except Exception as ge:
@@ -929,18 +942,18 @@ class SignalWorker:
                 self.process_once()
                 
                 now = time.time()
-                # Sync signal statuses every 30 seconds
-                if now - last_sync > 30:
+                # Sync signal statuses every 120 seconds
+                if now - last_sync > 120:
                     self._sync_signal_statuses()
                     last_sync = now
                 
-                # Reconcile TP orders and ghost trades every 60 seconds
-                if now - last_reconcile > 60:
+                # Reconcile TP orders every 300 seconds (5 mins)
+                if now - last_reconcile > 300:
                     self._reconcile_tp_orders()
                     last_reconcile = now
                 
-                # Diagnostics every 2 minutes
-                if now - last_diag > 120:
+                # Diagnostics every 10 minutes
+                if now - last_diag > 600:
                     self._run_diagnostic()
                     last_diag = now
 
