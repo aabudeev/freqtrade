@@ -1,6 +1,6 @@
-FROM freqtradeorg/freqtrade:stable AS upstream
+FROM freqtradeorg/freqtrade:2026.3 AS upstream
 
-FROM freqtradeorg/freqtrade:stable
+FROM freqtradeorg/freqtrade:2026.3
 
 USER root
 COPY --from=upstream /freqtrade/freqtrade/rpc/api_server/ui /tmp/frequi-ui
