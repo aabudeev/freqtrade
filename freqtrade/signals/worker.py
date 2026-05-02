@@ -946,12 +946,16 @@ class SignalWorker:
         last_diag = 0
         while not self._stop_event.is_set():
             try:
+                now = time.time()
+                if hasattr(self, '_backoff_until') and now < self._backoff_until:
+                    self._stop_event.wait(5)
+                    continue
+
                 # Reset any signals stuck in 'processing' (e.g. after crash)
                 self.store.reset_stuck_signals()
                 
                 self.process_once()
                 
-                now = time.time()
                 # Sync signal statuses every 120 seconds
                 if now - last_sync > 120:
                     self._sync_signal_statuses()
@@ -967,8 +971,13 @@ class SignalWorker:
                     self._run_diagnostic()
                     last_diag = now
 
-            except Exception:
-                logger.error("SignalWorker encountered an error in main loop")
+            except Exception as e:
+                err_msg = str(e)
+                if "109429" in err_msg:
+                    logger.warning(f"BingX API Rate Limit detected (109429). Backing off for 60s.")
+                    self._backoff_until = time.time() + 60
+                else:
+                    logger.error(f"Error in SignalWorker loop: {e}")
             
             self._stop_event.wait(self.sleep_interval)
         logger.info("SignalWorker stopped")
