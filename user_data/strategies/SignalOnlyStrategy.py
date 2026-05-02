@@ -75,9 +75,15 @@ class SignalOnlyStrategy(IStrategy):
 
         try:
             from freqtrade.persistence import Trade, Order
+            from datetime import datetime, timezone, timedelta
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
+                # Protection: skip very new trades (less than 30s old)
+                # to avoid race condition with SignalWorker initial setup
+                if trade.open_date > datetime.now(timezone.utc) - timedelta(seconds=30):
+                    continue
+
                 # Check if we already have an open stoploss order in our database
                 has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
                 
