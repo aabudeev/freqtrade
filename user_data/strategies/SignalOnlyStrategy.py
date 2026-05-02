@@ -68,39 +68,53 @@ class SignalOnlyStrategy(IStrategy):
     def bot_loop_start(self, **kwargs) -> None:
         """
         Called at the start of each bot iteration.
-        Used to reconcile stoploss_order_id for BingX trigger orders.
+        Used to reconcile stoploss orders for BingX (Freqtrade V3 schema).
         """
         if self.config['exchange']['name'] != 'bingx':
             return
 
         try:
-            from freqtrade.persistence import Trade
+            from freqtrade.persistence import Trade, Order
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # If trade is open but has no stoploss_order_id, try to find it on exchange
-                if trade.stoploss_order_id is None and trade.stop_loss:
+                # Check if we already have an open stoploss order in our database
+                has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
+                
+                if not has_sl and trade.stop_loss:
                     try:
-                        # Query BingX open trigger orders
-                        # We use the internal CCXT instance
-                        exchange_name = self.config['exchange']['name']
-                        if exchange_name == 'bingx' and hasattr(self.dp.exchange, '_api'):
+                        if hasattr(self.dp.exchange, '_api'):
                             symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
                             # Fetch open orders from BingX V2 Swap API
                             open_orders = self.dp.exchange._api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol})
                             if open_orders and 'data' in open_orders:
                                 for o in open_orders['data']:
-                                    # Look for trigger/stop orders on the correct side
-                                    # For Long (buy), SL is Sell. For Short (sell), SL is Buy.
                                     order_side = o.get('side', '').lower()
                                     target_side = 'sell' if not trade.is_short else 'buy'
                                     
-                                    if order_side == target_side and o.get('type') in ('STOP', 'STOP_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_MARKET'):
-                                        # Check if price matches our stoploss (within 0.1% tolerance)
+                                    # Identify Stop orders
+                                    if order_side == target_side and o.get('type') in ('STOP', 'STOP_MARKET'):
                                         o_price = float(o.get('stopPrice') or o.get('price') or 0)
                                         if o_price > 0 and abs(o_price - trade.stop_loss) / trade.stop_loss < 0.001:
-                                            logger.info(f"BINGX RECONCILE: Found existing SL order {o['orderId']} for {trade.pair}. Linking.")
-                                            trade.stoploss_order_id = str(o['orderId'])
+                                            logger.info(f"BINGX RECONCILE: Found existing SL order {o['orderId']} for {trade.pair}. Registering.")
+                                            
+                                            # Create Order object in database to stop Freqtrade from placing a new one
+                                            new_order = Order(
+                                                ft_trade_id=trade.id,
+                                                ft_pair=trade.pair,
+                                                ft_is_open=True,
+                                                ft_order_side='stoploss',
+                                                order_id=str(o['orderId']),
+                                                status='open',
+                                                symbol=trade.pair,
+                                                order_type='stoploss',
+                                                side=target_side,
+                                                amount=trade.amount,
+                                                filled=0.0,
+                                                remaining=trade.amount,
+                                                order_date=datetime.now()
+                                            )
+                                            Trade.session.add(new_order)
                                             Trade.commit()
                                             break
                     except Exception as e_rec:
