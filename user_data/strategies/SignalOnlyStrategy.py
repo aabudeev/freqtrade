@@ -81,7 +81,12 @@ class SignalOnlyStrategy(IStrategy):
             for trade in open_trades:
                 # Protection: skip very new trades (less than 30s old)
                 # to avoid race condition with SignalWorker initial setup
-                if trade.open_date > datetime.now(timezone.utc) - timedelta(seconds=30):
+                # Ensure we compare aware datetimes
+                trade_open_date = trade.open_date
+                if trade_open_date.tzinfo is None:
+                    trade_open_date = trade_open_date.replace(tzinfo=timezone.utc)
+                
+                if trade_open_date > datetime.now(timezone.utc) - timedelta(seconds=30):
                     continue
 
                 # Check if we already have an open stoploss order in our database
