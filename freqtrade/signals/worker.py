@@ -24,6 +24,11 @@ class SignalWorker:
         self.sleep_interval = sleep_interval
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        
+        # Silence noisy exchange loggers
+        logging.getLogger('freqtrade.exchange').setLevel(logging.WARNING)
+        logging.getLogger('freqtrade.exchange.common').setLevel(logging.WARNING)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
 
     def process_once(self) -> int:
         """

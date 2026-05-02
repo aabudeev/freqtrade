@@ -749,7 +749,11 @@
             
             signals.forEach(sig => {
                 const p = parseSignalText(sig.text);
-                if (p.coin === "Unknown" || !p.coin) return;
+                
+                // Fallback to database symbol if parsing coin from text failed
+                if (p.coin === "Unknown" || !p.coin) {
+                    p.coin = sig.symbol ? sig.symbol.split('/')[0] : "???";
+                }
                 
                 const tr = document.createElement('tr');
                 

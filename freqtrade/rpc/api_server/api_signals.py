@@ -25,13 +25,16 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
             conn.row_factory = dict_factory
             cursor = conn.cursor()
             
-            # Получаем общее количество только для РЕАЛЬНЫХ сигналов
-            cursor.execute("SELECT COUNT(*) as total FROM ingest_queue WHERE symbol IS NOT NULL")
+            # Получаем общее количество только для РЕАЛЬНЫХ сигналов на ВХОД
+            # Исключаем уведомления о тейках/стопах, фильтруя по ключевым словам LONG/SHORT
+            query_filter = "WHERE symbol IS NOT NULL AND (text LIKE '%LONG%' OR text LIKE '%SHORT%')"
+            
+            cursor.execute(f"SELECT COUNT(*) as total FROM ingest_queue {query_filter}")
             total = cursor.fetchone()["total"]
             
-            # Получаем только те записи, которые являются сигналами
+            # Получаем только записи сигналов на вход с пагинацией
             cursor.execute(
-                "SELECT * FROM ingest_queue WHERE symbol IS NOT NULL ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
+                f"SELECT * FROM ingest_queue {query_filter} ORDER BY occurred_at DESC LIMIT ? OFFSET ?", 
                 (limit, offset)
             )
             rows = cursor.fetchall()
