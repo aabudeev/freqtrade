@@ -89,18 +89,38 @@ class SignalOnlyStrategy(IStrategy):
             for trade in open_trades:
                 # Fetch open orders (Limits) and pending orders (Trigger/Stop)
                 try:
-                    symbol_api = trade.pair.replace("/", "-").split(":")[0]
-                    # Use universal request method to avoid method naming issues
-                    open_resp = api.request('openApi/swap/v2/trade/openOrders', 'private', 'GET', {"symbol": symbol_api})
-                    pending_resp = api.request('openApi/swap/v2/trade/pendingOrders', 'private', 'GET', {"symbol": symbol_api})
+                    # Robust symbol formatting
+                    symbol_raw = trade.pair.split(':')[0] if ':' in trade.pair else trade.pair
+                    symbol_api = symbol_raw.replace("/", "-")
                     
-                    open_orders = open_resp.get('data', []) if isinstance(open_resp, dict) else []
-                    pending_orders = pending_resp.get('data', []) if isinstance(pending_resp, dict) else []
+                    # Direct API calls with full error logging
+                    try:
+                        open_resp = api.request('openApi/swap/v2/trade/openOrders', 'private', 'GET', {"symbol": symbol_api})
+                    except Exception as e_open:
+                        logger.error(f"BINGX RECONCILE: OpenOrders API error: {e_open}")
+                        open_resp = {}
+                        
+                    try:
+                        pending_resp = api.request('openApi/swap/v2/trade/pendingOrders', 'private', 'GET', {"symbol": symbol_api})
+                    except Exception as e_pend:
+                        logger.error(f"BINGX RECONCILE: PendingOrders API error: {e_pend}")
+                        pending_resp = {}
                     
-                    # Combine for the loop
+                    # Safe data extraction
+                    open_orders = []
+                    if isinstance(open_resp, dict) and 'data' in open_resp:
+                        open_orders = open_resp['data'] if isinstance(open_resp['data'], list) else []
+                    
+                    pending_orders = []
+                    if isinstance(pending_resp, dict) and 'data' in pending_resp:
+                        pending_orders = pending_resp['data'] if isinstance(pending_resp['data'], list) else []
+                    
                     all_exchange_orders = open_orders + pending_orders
                 except Exception as e_fetch:
                     logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
+                    # Log full traceback for the 'p' error
+                    import traceback
+                    logger.error(traceback.format_exc())
                     continue
 
                 # --- RECONCILE TAKE PROFIT (TP) ---
