@@ -393,7 +393,7 @@ class SignalWorker:
                                         tp_order = self.bot.exchange._api.swapV2PrivatePostTradeOrder({
                                             "symbol": symbol,
                                             "side": exit_side.upper(),
-                                            "positionSide": position_side,
+                                            "positionSide": "BOTH",
                                             "type": "LIMIT",
                                             "quantity": trade.amount,
                                             "price": tp_price,

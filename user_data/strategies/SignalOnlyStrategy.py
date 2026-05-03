@@ -2,7 +2,7 @@
 """Strictly Signal-based Strategy. No automated TA entries."""
 
 from pandas import DataFrame
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -120,13 +120,16 @@ class SignalOnlyStrategy(IStrategy):
                             if tp_price_str:
                                 tp_price = float(tp_price_str)
                                 logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
+                                # BingX V2 raw API symbol: AVAX-USDT
+                                symbol = trade.pair.replace("/", "-").split(":")[0]
+                                
+                                logger.info(f"Placing TP on exchange: {symbol} at {tp_price}")
                                 
                                 # Use direct API for creation as it's more specific for BingX V2
-                                api_symbol = trade.pair.replace("/", "-").split(":")[0]
                                 tp_order = api.swapV2PrivatePostTradeOrder({
-                                    "symbol": api_symbol,
+                                    "symbol": symbol,
                                     "side": trade.exit_side.upper(),
-                                    "positionSide": "LONG" if not trade.is_short else "SHORT",
+                                    "positionSide": "BOTH",
                                     "type": "LIMIT",
                                     "quantity": trade.amount,
                                     "price": tp_price,
@@ -162,7 +165,7 @@ class SignalOnlyStrategy(IStrategy):
             filled=0.0,
             remaining=trade.amount,
             price=price,
-            order_date=datetime.now()
+            order_date=datetime.now(timezone.utc)
         )
         trade.orders.append(new_order)
         Trade.commit()
