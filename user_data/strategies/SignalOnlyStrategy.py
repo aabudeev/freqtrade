@@ -80,6 +80,9 @@ class SignalOnlyStrategy(IStrategy):
             if not (self.dp and hasattr(self.dp, '_exchange') and self.dp._exchange and hasattr(self.dp._exchange, '_api')):
                 return
             
+            # Ensure session is clean to prevent PendingRollbackError loop
+            Trade.session.rollback()
+            
             api = self.dp._exchange._api
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
@@ -148,6 +151,8 @@ class SignalOnlyStrategy(IStrategy):
             ft_pair=trade.pair,
             ft_is_open=True,
             ft_order_side=side,
+            ft_amount=trade.amount,
+            ft_price=price,
             order_id=order_id,
             status='open',
             symbol=trade.pair,
