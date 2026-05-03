@@ -4,6 +4,12 @@
     "stake_amount": 20,
     "max_open_trades": 10,
     "dry_run": false,
+    "order_types": {
+        "entry": "market",
+        "exit": "limit",
+        "stoploss": "market",
+        "stoploss_on_exchange": false
+    },
     "strategy_settings": {
         "SignalOnlyStrategy": {
             "leverage": 25.0
