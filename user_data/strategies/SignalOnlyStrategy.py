@@ -92,9 +92,9 @@ class SignalOnlyStrategy(IStrategy):
                 
                 # Fetch open orders from BingX to see what's actually there
                 try:
-                    if hasattr(self.dp.exchange, '_api'):
+                    if hasattr(self.exchange, '_api'):
                         symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
-                        open_orders_raw = self.dp.exchange._api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol})
+                        open_orders_raw = self.exchange._api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol})
                         
                         if open_orders_raw and 'data' in open_orders_raw:
                             sl_order_id = None
@@ -149,7 +149,7 @@ class SignalOnlyStrategy(IStrategy):
                                     # BingX V2 internal symbol: AVAXUSDT
                                     api_symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
                                     
-                                    tp_order = self.dp.exchange._api.swapV2PrivatePostTradeOrder({
+                                    tp_order = self.exchange._api.swapV2PrivatePostTradeOrder({
                                         "symbol": api_symbol,
                                         "side": trade.exit_side.upper(),
                                         "positionSide": "LONG" if not trade.is_short else "SHORT",
