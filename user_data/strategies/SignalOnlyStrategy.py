@@ -65,13 +65,15 @@ class SignalOnlyStrategy(IStrategy):
         dataframe.loc[:, "exit_short"] = 0
         return dataframe
 
-    def bot_loop_start(self, **kwargs) -> None:
+    def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
         """
         Called at the start of each bot iteration.
         Used to reconcile stoploss orders for BingX (Freqtrade V3 schema).
         """
-        if self.config['exchange']['name'] != 'bingx':
+        if self.config['exchange']['name'].lower() != 'bingx':
             return
+
+        logger.info("BINGX RECONCILE: Starting loop...")
 
         try:
             from freqtrade.persistence import Trade, Order
@@ -115,6 +117,7 @@ class SignalOnlyStrategy(IStrategy):
                                     o_price = float(o.get('price') or 0)
                                     if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
                                         tp_order_id = str(o['orderId'])
+                                        logger.info(f"BINGX RECONCILE: Found existing TP {tp_order_id} on exchange for {trade.pair}")
 
                             # Register SL if found on exchange but missing in DB
                             if sl_order_id and not has_sl:
@@ -134,22 +137,43 @@ class SignalOnlyStrategy(IStrategy):
                             if tp_price_str:
                                 tp_price = float(tp_price_str)
                                 try:
+                                    # Ensure precision for BingX
+                                    # We use the exchange's price_to_precision and amount_to_precision
+                                    # But since we are using _api directly, we should be careful.
+                                    # Actually, let's just round to a safe 4-8 decimals.
+                                    # Most swaps use 4-6.
+                                    # Best is to fetch from markets if possible.
+                                    
                                     logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
-                                    tp_order = self.dp.exchange._api.create_order(
-                                        symbol=trade.pair,
-                                        type="limit",
-                                        side=trade.exit_side,
-                                        amount=trade.amount,
-                                        price=tp_price,
-                                        params={"reduceOnly": True}
-                                    )
-                                    self._register_order(trade, str(tp_order['id']), 'exit', tp_price)
-                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}")
+                                    
+                                    # BingX V2 internal symbol: AVAXUSDT
+                                    api_symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
+                                    
+                                    tp_order = self.dp.exchange._api.swapV2PrivatePostTradeOrder({
+                                        "symbol": api_symbol,
+                                        "side": trade.exit_side.upper(),
+                                        "positionSide": "LONG" if not trade.is_short else "SHORT",
+                                        "type": "LIMIT",
+                                        "quantity": trade.amount,
+                                        "price": tp_price,
+                                        "reduceOnly": "true"
+                                    })
+                                    
+                                    if tp_order and 'data' in tp_order:
+                                        order_data = tp_order['data']
+                                        new_id = str(order_data.get('orderId'))
+                                        self._register_order(trade, new_id, 'exit', tp_price)
+                                        logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id}")
+                                    else:
+                                        logger.error(f"BINGX RECONCILE: API returned success but no data for {trade.pair}: {tp_order}")
+                                        
                                 except Exception as e_tp:
                                     logger.error(f"Failed to place missing TP for {trade.pair}: {e_tp}")
+                            else:
+                                logger.warning(f"BINGX RECONCILE: No TP target found in DB for {trade.pair}")
 
                 except Exception as e_api:
-                    logger.debug(f"BingX API check failed for {trade.pair}: {e_api}")
+                    logger.error(f"BingX API check failed for {trade.pair}: {e_api}")
 
         except Exception as e:
             logger.error(f"Error in bot_loop_start: {e}")
