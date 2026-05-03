@@ -66,7 +66,79 @@ class SignalOnlyStrategy(IStrategy):
         return dataframe
 
     def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
-        pass
+        """
+        Reconcile missing orders on exchange (startup and loop).
+        """
+        if self.config['exchange']['name'].lower() != 'bingx':
+            return
+
+        try:
+            from freqtrade.persistence import Trade, Order
+            from datetime import datetime
+            
+            # Use direct CCXT API for reconciliation
+            if not (self.dp and hasattr(self.dp, '_exchange') and self.dp._exchange and hasattr(self.dp._exchange, '_api')):
+                return
+            
+            api = self.dp._exchange._api
+            open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
+            
+            for trade in open_trades:
+                # 1. Check if we already have an open exit order in DB
+                has_tp = any(o.ft_order_side == 'exit' and o.ft_is_open for o in trade.orders)
+                
+                if not has_tp:
+                    # 2. Check exchange for existing TP
+                    try:
+                        # Correct BingX V2 symbol: AVAX-USDT
+                        api_symbol = trade.pair.replace("/", "-").split(":")[0]
+                        open_orders_raw = api.swapV2PrivateGetTradeOpenOrders({"symbol": api_symbol})
+                        
+                        if open_orders_raw and 'data' in open_orders_raw:
+                            tp_order_id = None
+                            tp_target = trade.get_custom_data("signal_tp")
+                            
+                            target_side = 'sell' if not trade.is_short else 'buy'
+                            
+                            for o in open_orders_raw['data']:
+                                if o.get('side', '').lower() == target_side and o.get('type') == 'LIMIT':
+                                    o_price = float(o.get('price') or 0)
+                                    if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
+                                        tp_order_id = str(o['orderId'])
+                                        break
+                            
+                            if tp_order_id:
+                                logger.info(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
+                                self._register_order(trade, tp_order_id, 'exit', float(tp_target))
+                                has_tp = True
+                        
+                        # 3. If still no TP, place it
+                        if not has_tp:
+                            tp_price_str = trade.get_custom_data("signal_tp")
+                            if tp_price_str:
+                                tp_price = float(tp_price_str)
+                                logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
+                                
+                                tp_order = api.swapV2PrivatePostTradeOrder({
+                                    "symbol": api_symbol,
+                                    "side": trade.exit_side.upper(),
+                                    "positionSide": "LONG" if not trade.is_short else "SHORT",
+                                    "type": "LIMIT",
+                                    "quantity": trade.amount,
+                                    "price": tp_price,
+                                    "reduceOnly": "true"
+                                })
+                                
+                                if tp_order and 'data' in tp_order:
+                                    new_id = str(tp_order['data'].get('orderId'))
+                                    self._register_order(trade, new_id, 'exit', tp_price)
+                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id}")
+
+                    except Exception as e_inner:
+                        logger.error(f"BINGX RECONCILE: Error for {trade.pair}: {e_inner}")
+
+        except Exception as e:
+            logger.error(f"BINGX RECONCILE: Global error: {e}")
 
     def _register_order(self, trade, order_id, side, price):
         from freqtrade.persistence import Order, Trade
