@@ -474,26 +474,37 @@
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
             if (res.status === 401) {
+                console.warn('401 Unauthorized. Attempting recovery...');
                 // Try refresh token first
                 if (ftRefreshToken) {
-                    const refreshRes = await fetch('/api/v1/token/refresh', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
-                    });
-                    if (refreshRes.ok) {
-                        const refreshData = await refreshRes.json();
-                        ftToken = refreshData.access_token;
-                        scheduleTokenRefresh();
-                        options.headers['Authorization'] = `Bearer ${ftToken}`;
-                        res = await fetch(url, options);
-                        if (res.ok) return res;
-                    }
+                    try {
+                        const refreshRes = await fetch('/api/v1/token/refresh', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${ftRefreshToken}` }
+                        });
+                        if (refreshRes.ok) {
+                            const refreshData = await refreshRes.json();
+                            ftToken = refreshData.access_token;
+                            scheduleTokenRefresh();
+                            options.headers['Authorization'] = `Bearer ${ftToken}`;
+                            res = await fetch(url, options);
+                            if (res.ok) return res;
+                        }
+                    } catch (e) { console.error('Token refresh failed:', e); }
                 }
-                // Refresh failed or no refresh token — do full re-login
+                
+                // Refresh failed or no refresh token — do full silent re-login
                 const loginOk = await silentLogin();
                 if (loginOk) {
                     options.headers['Authorization'] = `Bearer ${ftToken}`;
                     res = await fetch(url, options);
+                    if (res.ok) return res;
+                }
+
+                // Still 401? Session is likely dead. Force reload as requested by user's manual fix.
+                if (res.status === 401) {
+                    console.error('Authentication lost. Reloading page in 3s...');
+                    setTimeout(() => window.location.reload(), 3000);
                 }
             }
             return res;
