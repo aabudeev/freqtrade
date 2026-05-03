@@ -87,29 +87,26 @@ class SignalOnlyStrategy(IStrategy):
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # Fetch orders using high-level exchange wrapper to respect proxy/config
+                # Fetch orders using CCXT unified and raw methods
                 try:
-                    # 1. Fetch regular open orders (usually includes LIMIT orders)
-                    open_orders = self.dp._exchange.fetch_open_orders(trade.pair)
+                    # 1. Fetch regular open orders (Limits)
+                    # Use the configured api object directly
+                    open_orders = api.fetch_open_orders(trade.pair)
                     
-                    # 2. Try to fetch trigger/pending orders if supported by CCXT unified API
-                    # On BingX, trigger orders are often separate. 
-                    # We'll also try a direct call but via the safest method possible.
+                    # 2. Fetch pending/trigger orders (Stops)
                     pending_orders = []
+                    symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                    
+                    # Try raw BingX method which we know exists in this CCXT version
                     try:
-                        # Some CCXT versions support fetchTriggerOrders
-                        if hasattr(api, 'fetchTriggerOrders'):
-                            pending_orders = api.fetchTriggerOrders(trade.pair)
-                        else:
-                            # Fallback to direct call but with error suppression
-                            symbol_api = trade.pair.replace("/", "-").split(":")[0]
-                            # Try the most likely raw method name that Freqtrade's CCXT version might have
-                            if hasattr(api, 'swapV2PrivateGetTradePendingOrders'):
-                                resp = api.swapV2PrivateGetTradePendingOrders({"symbol": symbol_api})
-                                if isinstance(resp, dict) and 'data' in resp:
-                                    pending_orders = resp['data']
-                    except Exception:
-                        pass # If this fails, we'll still have open_orders
+                        # Use getattr for maximum safety
+                        raw_method = getattr(api, 'swapV2PrivateGetTradePendingOrders', None)
+                        if raw_method:
+                            resp = raw_method({"symbol": symbol_api})
+                            if isinstance(resp, dict) and 'data' in resp:
+                                pending_orders = resp['data']
+                    except Exception as e_pend:
+                        logger.debug(f"BINGX RECONCILE: Pending fallback error: {e_pend}")
                     
                     all_exchange_orders = open_orders + pending_orders
                 except Exception as e_fetch:
