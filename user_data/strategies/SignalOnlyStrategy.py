@@ -25,6 +25,18 @@ class SignalOnlyStrategy(IStrategy):
     INTERFACE_VERSION = 3
     can_short: bool = True
 
+    # Entry/Exit timeouts
+    unfilledtimeout = {
+        'entry': 10,
+        'exit': 1440, # 24 hours
+        'exit_timeout_count': 0,
+        'unit': 'minutes'
+    }
+
+    # Reconciliation throttle (5 minutes)
+    _last_reconcile_ts = 0
+    _reconcile_interval = 300 # seconds
+
     minimal_roi = {"0": 10.0}  # Effectively disabled
     stoploss = -0.99           # Effectively disabled
     
@@ -87,7 +99,7 @@ class SignalOnlyStrategy(IStrategy):
             # Run reconciliation every 5 minutes to avoid log spam and API rate limits
             now_ts = datetime.now().timestamp()
             last_check = getattr(self, '_last_reconcile_ts', 0)
-            if now_ts - last_check < 300: # 300 seconds = 5 minutes
+            if now_ts - last_check < self._reconcile_interval:
                 return
             self._last_reconcile_ts = now_ts
             
@@ -127,17 +139,17 @@ class SignalOnlyStrategy(IStrategy):
                     try:
                         tp_order_id = None
                         tp_target = trade.get_custom_data("signal_tp")
-                        target_side = 'SELL' if not trade.is_short else 'BUY'
+                        tp_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         for o in all_exchange_orders:
                             # Handle both CCXT unified format and BingX raw format
                             o_side = str(o.get('side', '')).upper()
                             o_type = str(o.get('type', '')).upper()
                             
-                            if o_side == target_side and o_type == 'LIMIT':
+                            if o_type == 'LIMIT' and o_side == tp_side:
                                 # CCXT unified price is 'price', Raw is 'price'
                                 o_price = float(o.get('price') or 0)
-                                if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
+                                if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.005:
                                     tp_order_id = str(o.get('id') or o.get('orderId'))
                                     break
                         
@@ -151,7 +163,7 @@ class SignalOnlyStrategy(IStrategy):
                             symbol = trade.pair.replace("/", "-").split(":")[0]
                             tp_order = api.swapV2PrivatePostTradeOrder({
                                 "symbol": symbol,
-                                "side": target_side.upper(),
+                                "side": tp_side.upper(),
                                 "positionSide": "BOTH",
                                 "type": "LIMIT",
                                 "quantity": trade.amount,
@@ -204,17 +216,12 @@ class SignalOnlyStrategy(IStrategy):
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
                         else:
-                            # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it?
-                            # Let's count them to be safe.
-                            non_limit_count = len([o for o in all_exchange_orders if str(o.get('type', '')).upper() != 'LIMIT'])
-                            if non_limit_count > 0:
-                                logger.warning(f"BINGX RECONCILE: Found {non_limit_count} non-limit orders for {trade.pair} but none matched SL price {sl_price}. SKIP placing to avoid duplicates.")
-                                # We set has_sl to True to STOP the loop, even if we didn't match it perfectly
-                                # This is a safety measure to stop the duplication spam.
+                            # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it perfectly?
+                            # We count them and if any exist, we SKIP placing a new one to be safe.
+                            non_limit_orders = [o for o in all_exchange_orders if str(o.get('type', o.get('orderType', ''))).upper() != 'LIMIT']
+                            if non_limit_orders:
+                                logger.debug(f"BINGX RECONCILE: Found {len(non_limit_orders)} potential SL orders for {trade.pair}. Skipping to avoid duplicates.")
                                 has_sl = True
-                                # Log everything to find out why it didn't match
-                                for o in all_exchange_orders:
-                                    logger.info(f"  DEBUG ORDER: {o}")
                         
                         if not has_sl and sl_price:
                             logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price}")
@@ -264,14 +271,7 @@ class SignalOnlyStrategy(IStrategy):
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:
-        # Take profit from signal
-        signal_tp = trade.get_custom_data("signal_tp")
-        if signal_tp is not None:
-            tp_price = float(signal_tp)
-            if not trade.is_short:
-                if current_rate >= tp_price:
-                    return f"signal_tp_{tp_price}"
-            else:
-                if current_rate <= tp_price:
-                    return f"signal_tp_{tp_price}"
+        # We use exchange-side LIMIT orders for TP (managed in bot_loop_start reconciliation)
+        # So we don't need manual TP check here anymore. 
+        # This prevents market-order conflicts with existing limit orders.
         return None
