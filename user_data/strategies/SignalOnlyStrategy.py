@@ -87,9 +87,13 @@ class SignalOnlyStrategy(IStrategy):
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # Fetch open orders once for this pair
+                # Fetch open orders (Limits) and pending orders (Trigger/Stop)
                 try:
-                    open_orders = self.dp._exchange._api.fetch_open_orders(trade.pair)
+                    symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                    open_orders = api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol_api}).get('data', [])
+                    pending_orders = api.swapV2PrivateGetTradePendingOrders({"symbol": symbol_api}).get('data', [])
+                    # Combine for the loop
+                    all_exchange_orders = open_orders + pending_orders
                 except Exception as e_fetch:
                     logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
                     continue
@@ -100,13 +104,14 @@ class SignalOnlyStrategy(IStrategy):
                     try:
                         tp_order_id = None
                         tp_target = trade.get_custom_data("signal_tp")
-                        target_side = 'sell' if not trade.is_short else 'buy'
+                        target_side = 'SELL' if not trade.is_short else 'BUY'
                         
-                        for o in open_orders:
-                            if o.get('side') == target_side and o.get('type') == 'limit':
+                        for o in all_exchange_orders:
+                            # BingX raw API returns uppercase side/type
+                            if o.get('side') == target_side and o.get('type') == 'LIMIT':
                                 o_price = float(o.get('price') or 0)
                                 if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
-                                    tp_order_id = str(o['id'])
+                                    tp_order_id = str(o.get('orderId'))
                                     break
                         
                         if tp_order_id:
@@ -140,16 +145,16 @@ class SignalOnlyStrategy(IStrategy):
                     try:
                         sl_order_id = None
                         sl_price = trade.stop_loss
-                        target_side = 'sell' if not trade.is_short else 'buy'
+                        target_side = 'SELL' if not trade.is_short else 'BUY'
                         
-                        for o in open_orders:
+                        for o in all_exchange_orders:
                             o_type = str(o.get('type', '')).upper()
-                            # Flexible check for SL: not limit, and price matches stop_loss
+                            # SL is usually STOP_MARKET or TRIGGER_MARKET
                             if o.get('side') == target_side and o_type != 'LIMIT':
-                                # Check various price fields CCXT might use for BingX
-                                o_stop_price = float(o.get('stopPrice') or o.get('triggerPrice') or o.get('price') or 0)
+                                # Raw API uses 'stopPrice'
+                                o_stop_price = float(o.get('stopPrice') or o.get('price') or 0)
                                 if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.01:
-                                    sl_order_id = str(o['id'])
+                                    sl_order_id = str(o.get('orderId'))
                                     break
                         
                         if sl_order_id:
@@ -157,10 +162,7 @@ class SignalOnlyStrategy(IStrategy):
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
                         else:
-                            # Log what we saw if SL not found
-                            logger.info(f"BINGX RECONCILE: SL NOT found for {trade.pair} among {len(open_orders)} orders.")
-                            for o in open_orders:
-                                logger.debug(f"  Order: id={o.get('id')}, type={o.get('type')}, price={o.get('price')}, stopPrice={o.get('stopPrice')}")
+                            logger.info(f"BINGX RECONCILE: SL NOT found for {trade.pair} in {len(all_exchange_orders)} combined orders.")
                         
                         if not has_sl and sl_price:
                             logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price}")
