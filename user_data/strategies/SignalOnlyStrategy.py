@@ -172,10 +172,8 @@ class SignalOnlyStrategy(IStrategy):
             price=price,
             order_date=datetime.now()
         )
-        Trade.session.add(new_order)
+        trade.orders.append(new_order)
         Trade.commit()
-        except Exception as e:
-            logger.error(f"Error in bot_loop_start: {e}")
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:
