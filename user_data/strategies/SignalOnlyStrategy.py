@@ -167,15 +167,28 @@ class SignalOnlyStrategy(IStrategy):
                         target_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         for o in all_exchange_orders:
-                            o_side = str(o.get('side', '')).upper()
-                            o_type = str(o.get('type', '')).upper()
+                            o_side = str(o.get('side', o.get('orderSide', ''))).upper()
+                            o_type = str(o.get('type', o.get('orderType', ''))).upper()
                             
-                            # SL is usually STOP_MARKET or TRIGGER_MARKET
+                            # Log every order for debugging if needed (only if SL not found yet)
+                            logger.debug(f"  Checking Order: side={o_side}, type={o_type}, data={o}")
+                            
+                            # SL is usually NOT a LIMIT order
                             if o_side == target_side and o_type != 'LIMIT':
-                                # CCXT uses 'stopPrice', Raw uses 'stopPrice'
-                                o_stop_price = float(o.get('stopPrice') or o.get('price') or 0)
-                                if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.01:
-                                    sl_order_id = str(o.get('id') or o.get('orderId'))
+                                # Check every possible price field
+                                prices = [
+                                    o.get('stopPrice'), o.get('triggerPrice'), 
+                                    o.get('price'), o.get('avgPrice'),
+                                    o.get('stop_price'), o.get('trigger_price')
+                                ]
+                                for p in prices:
+                                    try:
+                                        if p and abs(float(p) - float(sl_price)) / float(sl_price) < 0.02:
+                                            sl_order_id = str(o.get('id') or o.get('orderId'))
+                                            break
+                                    except (ValueError, TypeError):
+                                        continue
+                                if sl_order_id:
                                     break
                         
                         if sl_order_id:
@@ -183,7 +196,17 @@ class SignalOnlyStrategy(IStrategy):
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
                         else:
-                            logger.info(f"BINGX RECONCILE: SL NOT found for {trade.pair} in {len(all_exchange_orders)} combined orders.")
+                            # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it?
+                            # Let's count them to be safe.
+                            non_limit_count = len([o for o in all_exchange_orders if str(o.get('type', '')).upper() != 'LIMIT'])
+                            if non_limit_count > 0:
+                                logger.warning(f"BINGX RECONCILE: Found {non_limit_count} non-limit orders for {trade.pair} but none matched SL price {sl_price}. SKIP placing to avoid duplicates.")
+                                # We set has_sl to True to STOP the loop, even if we didn't match it perfectly
+                                # This is a safety measure to stop the duplication spam.
+                                has_sl = True
+                                # Log everything to find out why it didn't match
+                                for o in all_exchange_orders:
+                                    logger.info(f"  DEBUG ORDER: {o}")
                         
                         if not has_sl and sl_price:
                             logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price}")
