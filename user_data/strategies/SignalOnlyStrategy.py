@@ -228,7 +228,8 @@ class SignalOnlyStrategy(IStrategy):
                                 has_sl = True
                         
                         if not has_sl and sl_price:
-                            logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price}")
+                            sl_price_rounded = round(float(sl_price), 8)
+                            logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
                             symbol = trade.pair.replace("/", "-").split(":")[0]
                             sl_order = api.swapV2PrivatePostTradeOrder({
                                 "symbol": symbol,
@@ -236,7 +237,7 @@ class SignalOnlyStrategy(IStrategy):
                                 "positionSide": "BOTH",
                                 "type": "STOP_MARKET",
                                 "quantity": trade.amount,
-                                "stopPrice": sl_price,
+                                "stopPrice": sl_price_rounded,
                                 "reduceOnly": "true"
                             })
                             if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
