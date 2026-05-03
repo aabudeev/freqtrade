@@ -90,8 +90,8 @@ class SignalOnlyStrategy(IStrategy):
                 if not has_tp:
                     # 2. Check exchange for existing TP
                     try:
-                        # Use unified CCXT method - much more reliable
-                        open_orders = self.dp._exchange.fetch_open_orders(trade.pair)
+                        # Use unified CCXT method via internal _api object
+                        open_orders = self.dp._exchange._api.fetch_open_orders(trade.pair)
                         
                         tp_order_id = None
                         tp_target = trade.get_custom_data("signal_tp")
