@@ -87,40 +87,33 @@ class SignalOnlyStrategy(IStrategy):
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # Fetch open orders (Limits) and pending orders (Trigger/Stop)
+                # Fetch orders using high-level exchange wrapper to respect proxy/config
                 try:
-                    # Robust symbol formatting
-                    symbol_raw = trade.pair.split(':')[0] if ':' in trade.pair else trade.pair
-                    symbol_api = symbol_raw.replace("/", "-")
+                    # 1. Fetch regular open orders (usually includes LIMIT orders)
+                    open_orders = self.dp._exchange.fetch_open_orders(trade.pair)
                     
-                    # Direct API calls with full error logging
-                    try:
-                        open_resp = api.request('openApi/swap/v2/trade/openOrders', 'private', 'GET', {"symbol": symbol_api})
-                    except Exception as e_open:
-                        logger.error(f"BINGX RECONCILE: OpenOrders API error: {e_open}")
-                        open_resp = {}
-                        
-                    try:
-                        pending_resp = api.request('openApi/swap/v2/trade/pendingOrders', 'private', 'GET', {"symbol": symbol_api})
-                    except Exception as e_pend:
-                        logger.error(f"BINGX RECONCILE: PendingOrders API error: {e_pend}")
-                        pending_resp = {}
-                    
-                    # Safe data extraction
-                    open_orders = []
-                    if isinstance(open_resp, dict) and 'data' in open_resp:
-                        open_orders = open_resp['data'] if isinstance(open_resp['data'], list) else []
-                    
+                    # 2. Try to fetch trigger/pending orders if supported by CCXT unified API
+                    # On BingX, trigger orders are often separate. 
+                    # We'll also try a direct call but via the safest method possible.
                     pending_orders = []
-                    if isinstance(pending_resp, dict) and 'data' in pending_resp:
-                        pending_orders = pending_resp['data'] if isinstance(pending_resp['data'], list) else []
+                    try:
+                        # Some CCXT versions support fetchTriggerOrders
+                        if hasattr(api, 'fetchTriggerOrders'):
+                            pending_orders = api.fetchTriggerOrders(trade.pair)
+                        else:
+                            # Fallback to direct call but with error suppression
+                            symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                            # Try the most likely raw method name that Freqtrade's CCXT version might have
+                            if hasattr(api, 'swapV2PrivateGetTradePendingOrders'):
+                                resp = api.swapV2PrivateGetTradePendingOrders({"symbol": symbol_api})
+                                if isinstance(resp, dict) and 'data' in resp:
+                                    pending_orders = resp['data']
+                    except Exception:
+                        pass # If this fails, we'll still have open_orders
                     
                     all_exchange_orders = open_orders + pending_orders
                 except Exception as e_fetch:
                     logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
-                    # Log full traceback for the 'p' error
-                    import traceback
-                    logger.error(traceback.format_exc())
                     continue
 
                 # --- RECONCILE TAKE PROFIT (TP) ---
@@ -132,11 +125,15 @@ class SignalOnlyStrategy(IStrategy):
                         target_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         for o in all_exchange_orders:
-                            # BingX raw API returns uppercase side/type
-                            if o.get('side') == target_side and o.get('type') == 'LIMIT':
+                            # Handle both CCXT unified format and BingX raw format
+                            o_side = str(o.get('side', '')).upper()
+                            o_type = str(o.get('type', '')).upper()
+                            
+                            if o_side == target_side and o_type == 'LIMIT':
+                                # CCXT unified price is 'price', Raw is 'price'
                                 o_price = float(o.get('price') or 0)
                                 if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
-                                    tp_order_id = str(o.get('orderId'))
+                                    tp_order_id = str(o.get('id') or o.get('orderId'))
                                     break
                         
                         if tp_order_id:
@@ -173,13 +170,15 @@ class SignalOnlyStrategy(IStrategy):
                         target_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         for o in all_exchange_orders:
+                            o_side = str(o.get('side', '')).upper()
                             o_type = str(o.get('type', '')).upper()
+                            
                             # SL is usually STOP_MARKET or TRIGGER_MARKET
-                            if o.get('side') == target_side and o_type != 'LIMIT':
-                                # Raw API uses 'stopPrice'
+                            if o_side == target_side and o_type != 'LIMIT':
+                                # CCXT uses 'stopPrice', Raw uses 'stopPrice'
                                 o_stop_price = float(o.get('stopPrice') or o.get('price') or 0)
                                 if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.01:
-                                    sl_order_id = str(o.get('orderId'))
+                                    sl_order_id = str(o.get('id') or o.get('orderId'))
                                     break
                         
                         if sl_order_id:
