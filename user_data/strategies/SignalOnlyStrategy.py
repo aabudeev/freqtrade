@@ -83,6 +83,14 @@ class SignalOnlyStrategy(IStrategy):
             # Ensure session is clean to prevent PendingRollbackError loop
             Trade.session.rollback()
             
+            # --- INTERVAL CHECK ---
+            # Run reconciliation every 5 minutes to avoid log spam and API rate limits
+            now_ts = datetime.now().timestamp()
+            last_check = getattr(self, '_last_reconcile_ts', 0)
+            if now_ts - last_check < 300: # 300 seconds = 5 minutes
+                return
+            self._last_reconcile_ts = now_ts
+            
             api = self.dp._exchange._api
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
@@ -134,7 +142,7 @@ class SignalOnlyStrategy(IStrategy):
                                     break
                         
                         if tp_order_id:
-                            logger.info(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
+                            logger.debug(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
                             self._register_order(trade, tp_order_id, 'exit', float(tp_target))
                             has_tp = True
                         
@@ -192,7 +200,7 @@ class SignalOnlyStrategy(IStrategy):
                                     break
                         
                         if sl_order_id:
-                            logger.info(f"BINGX RECONCILE: Found existing SL {sl_order_id} for {trade.pair}")
+                            logger.debug(f"BINGX RECONCILE: Found existing SL {sl_order_id} for {trade.pair}")
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
                         else:
