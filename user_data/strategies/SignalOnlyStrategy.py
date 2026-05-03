@@ -87,13 +87,11 @@ class SignalOnlyStrategy(IStrategy):
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # 1. Check if we already have an open exit order in DB
+                # --- RECONCILE TAKE PROFIT (TP) ---
                 has_tp = any(o.ft_order_side == 'exit' and o.ft_is_open for o in trade.orders)
                 
                 if not has_tp:
-                    # 2. Check exchange for existing TP
                     try:
-                        # Use unified CCXT method via internal _api object
                         open_orders = self.dp._exchange._api.fetch_open_orders(trade.pair)
                         
                         tp_order_id = None
@@ -101,8 +99,7 @@ class SignalOnlyStrategy(IStrategy):
                         target_side = 'sell' if not trade.is_short else 'buy'
                         
                         for o in open_orders:
-                            # Unified order side: 'buy' or 'sell'
-                            # Unified order type: 'limit' or 'stop'
+                            # Check for existing limit order at TP price
                             if o.get('side') == target_side and o.get('type') == 'limit':
                                 o_price = float(o.get('price') or 0)
                                 if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
@@ -114,53 +111,80 @@ class SignalOnlyStrategy(IStrategy):
                             self._register_order(trade, tp_order_id, 'exit', float(tp_target))
                             has_tp = True
                         
-                        # Cleanup invalid orders in DB for this trade
+                        # Cleanup invalid orders
                         for o in list(trade.orders):
                             if o.ft_is_open and (o.order_id is None or str(o.order_id).lower() == 'none'):
-                                logger.warning(f"BINGX RECONCILE: Cleaning up invalid order {o.order_id} in DB")
                                 o.ft_is_open = False
                                 o.status = 'cancelled'
                         Trade.commit()
                         
-                        # 3. If still no TP, place it
-                        if not has_tp:
-                            tp_price_str = trade.get_custom_data("signal_tp")
-                            if tp_price_str:
-                                tp_price = float(tp_price_str)
-                                logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
-                                # BingX V2 raw API symbol: AVAX-USDT
-                                symbol = trade.pair.replace("/", "-").split(":")[0]
-                                
-                                logger.info(f"Placing TP on exchange: {symbol} at {tp_price}")
-                                
-                                # Use direct API for creation as it's more specific for BingX V2
-                                tp_order = api.swapV2PrivatePostTradeOrder({
-                                    "symbol": symbol,
-                                    "side": trade.exit_side.upper(),
-                                    "positionSide": "BOTH",
-                                    "type": "LIMIT",
-                                    "quantity": trade.amount,
-                                    "price": tp_price,
-                                    "reduceOnly": "true"
-                                })
-                                
-                                logger.debug(f"BINGX RECONCILE: Raw TP response: {tp_order}")
-                                
-                                new_id = None
-                                if tp_order and 'data' in tp_order:
-                                    order_data = tp_order['data']
-                                    if isinstance(order_data, dict):
-                                        new_id = order_data.get('orderId')
-                                
-                                if new_id:
-                                    new_id_str = str(new_id)
-                                    self._register_order(trade, new_id_str, 'exit', tp_price)
-                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id_str}")
-                                else:
-                                    logger.error(f"BINGX RECONCILE: Failed to get orderId from response: {tp_order}")
+                        if not has_tp and tp_target:
+                            tp_price = float(tp_target)
+                            logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
+                            symbol = trade.pair.replace("/", "-").split(":")[0]
+                            tp_order = api.swapV2PrivatePostTradeOrder({
+                                "symbol": symbol,
+                                "side": target_side.upper(),
+                                "positionSide": "BOTH",
+                                "type": "LIMIT",
+                                "quantity": trade.amount,
+                                "price": tp_price,
+                                "reduceOnly": "true"
+                            })
+                            if tp_order and 'data' in tp_order and isinstance(tp_order['data'], dict):
+                                new_id = str(tp_order['data'].get('orderId'))
+                                if new_id and new_id != 'None':
+                                    self._register_order(trade, new_id, 'exit', tp_price)
+                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id}")
 
-                    except Exception as e_inner:
-                        logger.error(f"BINGX RECONCILE: Error for {trade.pair}: {e_inner}")
+                    except Exception as e_tp:
+                        logger.error(f"BINGX RECONCILE: TP Error for {trade.pair}: {e_tp}")
+
+                # --- RECONCILE STOP LOSS (SL) ---
+                # Freqtrade usually marks SL orders with o.ft_order_side == 'stoploss'
+                has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
+                
+                if not has_sl:
+                    try:
+                        open_orders = self.dp._exchange._api.fetch_open_orders(trade.pair)
+                        sl_order_id = None
+                        sl_price = trade.stop_loss
+                        target_side = 'sell' if not trade.is_short else 'buy'
+                        
+                        for o in open_orders:
+                            # BingX Stop Market orders might have type 'STOP_MARKET' or 'TRIGGER_MARKET'
+                            o_type = str(o.get('type', '')).upper()
+                            if o.get('side') == target_side and ('STOP' in o_type or 'TRIGGER' in o_type):
+                                o_stop_price = float(o.get('stopPrice') or o.get('price') or 0)
+                                if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.01:
+                                    sl_order_id = str(o['id'])
+                                    break
+                        
+                        if sl_order_id:
+                            logger.info(f"BINGX RECONCILE: Found existing SL {sl_order_id} for {trade.pair}")
+                            self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
+                            has_sl = True
+                        
+                        if not has_sl and sl_price:
+                            logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price}")
+                            symbol = trade.pair.replace("/", "-").split(":")[0]
+                            sl_order = api.swapV2PrivatePostTradeOrder({
+                                "symbol": symbol,
+                                "side": target_side.upper(),
+                                "positionSide": "BOTH",
+                                "type": "STOP_MARKET",
+                                "quantity": trade.amount,
+                                "stopPrice": sl_price,
+                                "reduceOnly": "true"
+                            })
+                            if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
+                                new_id = str(sl_order['data'].get('orderId'))
+                                if new_id and new_id != 'None':
+                                    self._register_order(trade, new_id, 'stoploss', sl_price)
+                                    logger.info(f"BINGX RECONCILE: SL placed for {trade.pair}, orderId: {new_id}")
+                                    
+                    except Exception as e_sl:
+                        logger.error(f"BINGX RECONCILE: SL Error for {trade.pair}: {e_sl}")
 
         except Exception as e:
             logger.error(f"BINGX RECONCILE: Global error: {e}")
