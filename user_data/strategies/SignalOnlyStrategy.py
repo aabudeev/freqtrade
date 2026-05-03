@@ -90,8 +90,13 @@ class SignalOnlyStrategy(IStrategy):
                 # Fetch open orders (Limits) and pending orders (Trigger/Stop)
                 try:
                     symbol_api = trade.pair.replace("/", "-").split(":")[0]
-                    open_orders = api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol_api}).get('data', [])
-                    pending_orders = api.swapV2PrivateGetTradePendingOrders({"symbol": symbol_api}).get('data', [])
+                    # Use universal request method to avoid method naming issues
+                    open_resp = api.request('openApi/swap/v2/trade/openOrders', 'private', 'GET', {"symbol": symbol_api})
+                    pending_resp = api.request('openApi/swap/v2/trade/pendingOrders', 'private', 'GET', {"symbol": symbol_api})
+                    
+                    open_orders = open_resp.get('data', []) if isinstance(open_resp, dict) else []
+                    pending_orders = pending_resp.get('data', []) if isinstance(pending_resp, dict) else []
+                    
                     # Combine for the loop
                     all_exchange_orders = open_orders + pending_orders
                 except Exception as e_fetch:
