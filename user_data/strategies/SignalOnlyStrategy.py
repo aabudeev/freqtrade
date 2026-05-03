@@ -39,7 +39,7 @@ class SignalOnlyStrategy(IStrategy):
         "entry": "market",
         "exit": "limit",
         "stoploss": "market",
-        "stoploss_on_exchange": True,
+        "stoploss_on_exchange": False,
     }
     order_time_in_force = {"entry": "GTC", "exit": "GTC"}
 
