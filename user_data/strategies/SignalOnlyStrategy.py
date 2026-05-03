@@ -79,57 +79,101 @@ class SignalOnlyStrategy(IStrategy):
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
             for trade in open_trades:
-                # Protection: skip very new trades (less than 30s old)
-                # to avoid race condition with SignalWorker initial setup
-                # Ensure we compare aware datetimes
-                trade_open_date = trade.open_date
-                if trade_open_date.tzinfo is None:
-                    trade_open_date = trade_open_date.replace(tzinfo=timezone.utc)
-                
-                if trade_open_date > datetime.now(timezone.utc) - timedelta(seconds=30):
-                    continue
+                # No more 30s delay - worker is now passive regarding orders.
+                # Only strategy handles order placement and registration.
 
-                # Check if we already have an open stoploss order in our database
+                # 1. Stop-Loss (SL) Reconciliation
                 has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
                 
-                if not has_sl and trade.stop_loss:
-                    try:
-                        if hasattr(self.dp.exchange, '_api'):
-                            symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
-                            # Fetch open orders from BingX V2 Swap API
-                            open_orders = self.dp.exchange._api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol})
-                            if open_orders and 'data' in open_orders:
-                                for o in open_orders['data']:
-                                    order_side = o.get('side', '').lower()
-                                    target_side = 'sell' if not trade.is_short else 'buy'
-                                    
-                                    # Identify Stop orders
-                                    if order_side == target_side and o.get('type') in ('STOP', 'STOP_MARKET'):
-                                        o_price = float(o.get('stopPrice') or o.get('price') or 0)
-                                        if o_price > 0 and abs(o_price - trade.stop_loss) / trade.stop_loss < 0.001:
-                                            logger.info(f"BINGX RECONCILE: Found existing SL order {o['orderId']} for {trade.pair}. Registering.")
-                                            
-                                            # Create Order object in database to stop Freqtrade from placing a new one
-                                            new_order = Order(
-                                                ft_trade_id=trade.id,
-                                                ft_pair=trade.pair,
-                                                ft_is_open=True,
-                                                ft_order_side='stoploss',
-                                                order_id=str(o['orderId']),
-                                                status='open',
-                                                symbol=trade.pair,
-                                                order_type='stoploss',
-                                                side=target_side,
-                                                amount=trade.amount,
-                                                filled=0.0,
-                                                remaining=trade.amount,
-                                                order_date=datetime.now()
-                                            )
-                                            Trade.session.add(new_order)
-                                            Trade.commit()
-                                            break
-                    except Exception as e_rec:
-                        logger.debug(f"BingX SL reconciliation failed for {trade.pair}: {e_rec}")
+                # 2. Take-Profit (TP) Reconciliation
+                has_tp = any(o.ft_order_side == 'exit' and o.ft_is_open for o in trade.orders)
+                
+                # Fetch open orders from BingX to see what's actually there
+                try:
+                    if hasattr(self.dp.exchange, '_api'):
+                        symbol = trade.pair.replace("/", "").replace(":USDT", "USDT")
+                        open_orders_raw = self.dp.exchange._api.swapV2PrivateGetTradeOpenOrders({"symbol": symbol})
+                        
+                        if open_orders_raw and 'data' in open_orders_raw:
+                            sl_order_id = None
+                            tp_order_id = None
+                            
+                            tp_target = trade.get_custom_data("signal_tp")
+                            
+                            for o in open_orders_raw['data']:
+                                order_side = o.get('side', '').lower()
+                                target_side = 'sell' if not trade.is_short else 'buy'
+                                
+                                # Check for SL (Stop/Stop Market)
+                                if not has_sl and order_side == target_side and o.get('type') in ('STOP', 'STOP_MARKET'):
+                                    o_price = float(o.get('stopPrice') or o.get('price') or 0)
+                                    if trade.stop_loss and abs(o_price - trade.stop_loss) / trade.stop_loss < 0.001:
+                                        sl_order_id = str(o['orderId'])
+                                
+                                # Check for TP (Limit order at signal_tp price)
+                                if not has_tp and order_side == target_side and o.get('type') == 'LIMIT':
+                                    o_price = float(o.get('price') or 0)
+                                    if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
+                                        tp_order_id = str(o['orderId'])
+
+                            # Register SL if found on exchange but missing in DB
+                            if sl_order_id and not has_sl:
+                                logger.info(f"BINGX RECONCILE: Registering existing SL {sl_order_id} for {trade.pair}")
+                                self._register_order(trade, sl_order_id, 'stoploss', trade.stop_loss)
+                                has_sl = True
+                            
+                            # Register TP if found on exchange but missing in DB
+                            if tp_order_id and not has_tp:
+                                logger.info(f"BINGX RECONCILE: Registering existing TP {tp_order_id} for {trade.pair}")
+                                self._register_order(trade, tp_order_id, 'exit', float(tp_target))
+                                has_tp = True
+
+                        # 3. Placement: If TP is missing both in DB and on Exchange, place it
+                        if not has_tp:
+                            tp_price_str = trade.get_custom_data("signal_tp")
+                            if tp_price_str:
+                                tp_price = float(tp_price_str)
+                                try:
+                                    logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
+                                    tp_order = self.dp.exchange._api.create_order(
+                                        symbol=trade.pair,
+                                        type="limit",
+                                        side=trade.exit_side,
+                                        amount=trade.amount,
+                                        price=tp_price,
+                                        params={"reduceOnly": True}
+                                    )
+                                    self._register_order(trade, str(tp_order['id']), 'exit', tp_price)
+                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}")
+                                except Exception as e_tp:
+                                    logger.error(f"Failed to place missing TP for {trade.pair}: {e_tp}")
+
+                except Exception as e_api:
+                    logger.debug(f"BingX API check failed for {trade.pair}: {e_api}")
+
+        except Exception as e:
+            logger.error(f"Error in bot_loop_start: {e}")
+
+    def _register_order(self, trade, order_id, side, price):
+        from freqtrade.persistence import Order, Trade
+        new_order = Order(
+            ft_trade_id=trade.id,
+            ft_pair=trade.pair,
+            ft_is_open=True,
+            ft_order_side=side,
+            order_id=order_id,
+            status='open',
+            symbol=trade.pair,
+            order_type='limit' if side == 'exit' else 'stoploss',
+            side=trade.exit_side,
+            amount=trade.amount,
+            filled=0.0,
+            remaining=trade.amount,
+            price=price,
+            order_date=datetime.now()
+        )
+        Trade.session.add(new_order)
+        Trade.commit()
         except Exception as e:
             logger.error(f"Error in bot_loop_start: {e}")
 

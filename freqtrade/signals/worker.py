@@ -311,8 +311,6 @@ class SignalWorker:
                                             self.bot.handle_trade_exit(trade, current_price, "stop_loss_hit_immediate")
                                             return len(claimed) # Stop processing this trade
                                             
-                                        self.bot.create_stoploss_order(trade, sl_price)
-                                        logger.info(f"Signal SL order placed on exchange: {sl_price}")
                                     except Exception as e:
                                         error_msg = str(e).lower()
                                         # BingX error 110412: "Stop Loss price should be greater than the current price" (for short)
@@ -366,8 +364,6 @@ class SignalWorker:
                                                 self.bot.handle_trade_exit(trade, current_price, "auto_stop_loss_hit_immediate")
                                                 return len(claimed)
 
-                                        self.bot.create_stoploss_order(trade, auto_sl_price)
-                                        logger.info(f"Auto SL placed (no signal SL): {auto_sl_price}")
                                     except Exception as e:
                                         logger.error(f"Failed to place auto SL: {e}")
 
@@ -389,15 +385,6 @@ class SignalWorker:
                                     if tp_price:
                                         exit_side = trade.exit_side
                                         # Use direct CCXT API to avoid Freqtrade wrapper argument issues
-                                        tp_order = self.bot.exchange._api.create_order(
-                                            symbol=trade.pair,
-                                            type="limit",
-                                            side=exit_side,
-                                            amount=trade.amount,
-                                            price=tp_price,
-                                            params={"reduceOnly": True}
-                                        )
-                                        logger.info(f"TP order placed on exchange: {tp_price} (id={tp_order.get('id', '?')})")
                                 except Exception as e:
                                     logger.error(f"Failed to place TP on exchange: {e}")
                                     # Fallback to auto TP if signal TP failed
@@ -405,15 +392,6 @@ class SignalWorker:
                                         logger.warning("Signal TP failed. Trying automatic TP fallback...")
                                         auto_tp_price = trade.open_rate * (1 + default_tp_pct) if not trade.is_short else trade.open_rate * (1 - default_tp_pct)
                                         try:
-                                            self.bot.exchange._api.create_order(
-                                                symbol=trade.pair,
-                                                type="limit",
-                                                side=exit_side,
-                                                amount=trade.amount,
-                                                price=auto_tp_price,
-                                                params={"reduceOnly": True}
-                                            )
-                                            logger.info(f"Auto TP fallback placed: {auto_tp_price}")
                                             trade.set_custom_data("signal_tp", str(auto_tp_price))
                                         except Exception as e2:
                                             logger.error(f"Auto TP fallback failed: {e2}")
