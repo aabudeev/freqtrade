@@ -400,7 +400,14 @@ class SignalWorker:
                                             "reduceOnly": "true"
                                         })
                                         if tp_order and 'data' in tp_order:
-                                            logger.info(f"TP placed successfully: {tp_order['data'].get('orderId')}")
+                                            order_data = tp_order['data']
+                                            new_id = order_data.get('orderId') if isinstance(order_data, dict) else None
+                                            if new_id:
+                                                logger.info(f"TP placed successfully: {new_id}")
+                                            else:
+                                                logger.error(f"Failed to get orderId from TP response: {tp_order}")
+                                        else:
+                                            logger.error(f"Invalid TP response format: {tp_order}")
                                 except Exception as e:
                                     logger.error(f"Failed to place TP on exchange: {e}")
                                     # Fallback to auto TP if signal TP failed

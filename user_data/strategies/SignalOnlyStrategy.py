@@ -114,6 +114,14 @@ class SignalOnlyStrategy(IStrategy):
                             self._register_order(trade, tp_order_id, 'exit', float(tp_target))
                             has_tp = True
                         
+                        # Cleanup invalid orders in DB for this trade
+                        for o in list(trade.orders):
+                            if o.ft_is_open and (o.order_id is None or str(o.order_id).lower() == 'none'):
+                                logger.warning(f"BINGX RECONCILE: Cleaning up invalid order {o.order_id} in DB")
+                                o.ft_is_open = False
+                                o.status = 'cancelled'
+                        Trade.commit()
+                        
                         # 3. If still no TP, place it
                         if not has_tp:
                             tp_price_str = trade.get_custom_data("signal_tp")
@@ -136,10 +144,20 @@ class SignalOnlyStrategy(IStrategy):
                                     "reduceOnly": "true"
                                 })
                                 
+                                logger.debug(f"BINGX RECONCILE: Raw TP response: {tp_order}")
+                                
+                                new_id = None
                                 if tp_order and 'data' in tp_order:
-                                    new_id = str(tp_order['data'].get('orderId'))
-                                    self._register_order(trade, new_id, 'exit', tp_price)
-                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id}")
+                                    order_data = tp_order['data']
+                                    if isinstance(order_data, dict):
+                                        new_id = order_data.get('orderId')
+                                
+                                if new_id:
+                                    new_id_str = str(new_id)
+                                    self._register_order(trade, new_id_str, 'exit', tp_price)
+                                    logger.info(f"BINGX RECONCILE: TP placed for {trade.pair}, orderId: {new_id_str}")
+                                else:
+                                    logger.error(f"BINGX RECONCILE: Failed to get orderId from response: {tp_order}")
 
                     except Exception as e_inner:
                         logger.error(f"BINGX RECONCILE: Error for {trade.pair}: {e_inner}")
