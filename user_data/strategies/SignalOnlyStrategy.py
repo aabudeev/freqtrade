@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
+# Silence noisy Freqtrade core loggers
+logging.getLogger('freqtrade.freqtradebot').setLevel(logging.WARNING)
+logging.getLogger('freqtrade.worker').setLevel(logging.WARNING)
+logging.getLogger('freqtrade.resolvers.strategy_resolver').setLevel(logging.WARNING)
 
 from freqtrade.strategy import IStrategy
 from freqtrade.persistence import Trade
@@ -275,3 +279,9 @@ class SignalOnlyStrategy(IStrategy):
         # So we don't need manual TP check here anymore. 
         # This prevents market-order conflicts with existing limit orders.
         return None
+
+    def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
+                           rate: float, time_in_force: str, sell_reason: str,
+                           current_time: datetime, **kwargs) -> bool:
+        logger.info(f"TRADE EXITING: {pair} reason: {sell_reason}")
+        return True
