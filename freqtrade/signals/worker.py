@@ -385,6 +385,22 @@ class SignalWorker:
                                     if tp_price:
                                         exit_side = trade.exit_side
                                         # Use direct CCXT API to avoid Freqtrade wrapper argument issues
+                                        # BingX V2 raw API symbol: AVAX-USDT
+                                        symbol = trade.pair.replace("/", "-").split(":")[0]
+                                        position_side = "LONG" if not trade.is_short else "SHORT"
+                                        
+                                        logger.info(f"Placing TP on exchange: {symbol} at {tp_price}")
+                                        tp_order = self.bot.exchange._api.swapV2PrivatePostTradeOrder({
+                                            "symbol": symbol,
+                                            "side": exit_side.upper(),
+                                            "positionSide": position_side,
+                                            "type": "LIMIT",
+                                            "quantity": trade.amount,
+                                            "price": tp_price,
+                                            "reduceOnly": "true"
+                                        })
+                                        if tp_order and 'data' in tp_order:
+                                            logger.info(f"TP placed successfully: {tp_order['data'].get('orderId')}")
                                 except Exception as e:
                                     logger.error(f"Failed to place TP on exchange: {e}")
                                     # Fallback to auto TP if signal TP failed
