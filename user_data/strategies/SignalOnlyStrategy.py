@@ -90,27 +90,26 @@ class SignalOnlyStrategy(IStrategy):
                 if not has_tp:
                     # 2. Check exchange for existing TP
                     try:
-                        # Correct BingX V2 symbol: AVAX-USDT
-                        api_symbol = trade.pair.replace("/", "-").split(":")[0]
-                        open_orders_raw = api.swapV2PrivateGetTradeOpenOrders({"symbol": api_symbol})
+                        # Use unified CCXT method - much more reliable
+                        open_orders = self.dp._exchange.fetch_open_orders(trade.pair)
                         
-                        if open_orders_raw and 'data' in open_orders_raw:
-                            tp_order_id = None
-                            tp_target = trade.get_custom_data("signal_tp")
-                            
-                            target_side = 'sell' if not trade.is_short else 'buy'
-                            
-                            for o in open_orders_raw['data']:
-                                if o.get('side', '').lower() == target_side and o.get('type') == 'LIMIT':
-                                    o_price = float(o.get('price') or 0)
-                                    if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
-                                        tp_order_id = str(o['orderId'])
-                                        break
-                            
-                            if tp_order_id:
-                                logger.info(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
-                                self._register_order(trade, tp_order_id, 'exit', float(tp_target))
-                                has_tp = True
+                        tp_order_id = None
+                        tp_target = trade.get_custom_data("signal_tp")
+                        target_side = 'sell' if not trade.is_short else 'buy'
+                        
+                        for o in open_orders:
+                            # Unified order side: 'buy' or 'sell'
+                            # Unified order type: 'limit' or 'stop'
+                            if o.get('side') == target_side and o.get('type') == 'limit':
+                                o_price = float(o.get('price') or 0)
+                                if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.001:
+                                    tp_order_id = str(o['id'])
+                                    break
+                        
+                        if tp_order_id:
+                            logger.info(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
+                            self._register_order(trade, tp_order_id, 'exit', float(tp_target))
+                            has_tp = True
                         
                         # 3. If still no TP, place it
                         if not has_tp:
@@ -119,6 +118,8 @@ class SignalOnlyStrategy(IStrategy):
                                 tp_price = float(tp_price_str)
                                 logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_price}")
                                 
+                                # Use direct API for creation as it's more specific for BingX V2
+                                api_symbol = trade.pair.replace("/", "-").split(":")[0]
                                 tp_order = api.swapV2PrivatePostTradeOrder({
                                     "symbol": api_symbol,
                                     "side": trade.exit_side.upper(),
