@@ -168,18 +168,12 @@ class SignalOnlyStrategy(IStrategy):
                     
                     all_exchange_orders = open_orders + pending_orders
                     
-                    # If it's an orphan AND has no orders on exchange -> Close it in DB to prevent crash loop
+                    # --- PASSIVE MONITORING ---
+                    # Only log a warning if position is missing, but NEVER close the trade in DB.
                     if is_orphan and not all_exchange_orders:
-                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) is an ORPHAN (no position, no orders). Closing in DB.")
-                        trade.is_open = False
-                        trade.close_date = datetime.now(timezone.utc)
-                        trade.close_reason = "orphan_healed"
-                        # Set profit to 0.0 to avoid REST API / FreqUI crashes (unsupported operand None * 100)
-                        trade.close_profit = 0.0
-                        trade.close_profit_abs = 0.0
-                        trade.close_rate = trade.open_rate # Fallback to prevent None in stats
-                        Trade.commit()
-                        continue
+                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) appears to have NO position and NO orders on exchange! Check manually.")
+                    elif is_orphan and all_exchange_orders:
+                        logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no position but has orders. Keeping open.")
 
                 except Exception as e_fetch:
                     logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
@@ -194,12 +188,10 @@ class SignalOnlyStrategy(IStrategy):
                         tp_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         for o in all_exchange_orders:
-                            # Handle both CCXT unified format and BingX raw format
                             o_side = str(o.get('side', '')).upper()
                             o_type = str(o.get('type', '')).upper()
                             
                             if o_type == 'LIMIT' and o_side == tp_side:
-                                # CCXT unified price is 'price', Raw is 'price'
                                 o_price = float(o.get('price') or 0)
                                 if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.005:
                                     tp_order_id = str(o.get('id') or o.get('orderId'))
@@ -211,15 +203,17 @@ class SignalOnlyStrategy(IStrategy):
                             has_tp = True
                         
                         if not has_tp and tp_target:
-                            logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_target}")
+                            tp_target_rounded = round(float(tp_target), 8)
+                            logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_target_rounded}")
                             symbol = trade.pair.replace("/", "-").split(":")[0]
+                            pos_side = "SHORT" if trade.is_short else "LONG"
                             tp_order = api.swapV2PrivatePostTradeOrder({
                                 "symbol": symbol,
                                 "side": tp_side.upper(),
                                 "positionSide": "BOTH",
                                 "type": "LIMIT",
                                 "quantity": trade.amount,
-                                "price": tp_target,
+                                "price": tp_target_rounded,
                                 "reduceOnly": "true"
                             })
                             if tp_order and 'data' in tp_order and isinstance(tp_order['data'], dict):
@@ -279,6 +273,7 @@ class SignalOnlyStrategy(IStrategy):
                             sl_price_rounded = round(float(sl_price), 8)
                             logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
                             symbol = trade.pair.replace("/", "-").split(":")[0]
+                            pos_side = "SHORT" if trade.is_short else "LONG"
                             sl_order = api.swapV2PrivatePostTradeOrder({
                                 "symbol": symbol,
                                 "side": target_side.upper(),
