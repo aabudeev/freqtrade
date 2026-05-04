@@ -110,6 +110,22 @@ class SignalOnlyStrategy(IStrategy):
             api = self.dp._exchange._api
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
+            # --- ONE-TIME DATA REPAIR ---
+            # Fix trades closed by healer previously that have None in profit fields (causes REST API crash)
+            try:
+                bad_trades = Trade.get_trades([Trade.is_open.is_(False), Trade.close_profit.is_(None)]).all()
+                for bt in bad_trades:
+                    logger.warning(f"BINGX RECONCILE: Repairing data for closed trade {bt.id} ({bt.pair})")
+                    bt.close_profit = 0.0
+                    bt.close_profit_abs = 0.0
+                    if bt.close_rate is None:
+                        bt.close_rate = bt.open_rate
+                if bad_trades:
+                    Trade.commit()
+            except Exception as e_repair:
+                logger.debug(f"BINGX RECONCILE: Repair failed (ignoring): {e_repair}")
+                Trade.session.rollback()
+
             # Fetch all positions once to check for orphans
             all_positions = []
             try:
@@ -158,6 +174,10 @@ class SignalOnlyStrategy(IStrategy):
                         trade.is_open = False
                         trade.close_date = datetime.now(timezone.utc)
                         trade.close_reason = "orphan_healed"
+                        # Set profit to 0.0 to avoid REST API / FreqUI crashes (unsupported operand None * 100)
+                        trade.close_profit = 0.0
+                        trade.close_profit_abs = 0.0
+                        trade.close_rate = trade.open_rate # Fallback to prevent None in stats
                         Trade.commit()
                         continue
 
