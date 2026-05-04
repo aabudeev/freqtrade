@@ -187,22 +187,27 @@ class SignalOnlyStrategy(IStrategy):
                         tp_target = trade.get_custom_data("signal_tp")
                         tp_side = 'SELL' if not trade.is_short else 'BUY'
                         
+                        # 3. Scan ALL exchange orders for matches
                         for o in all_exchange_orders:
-                            o_side = str(o.get('side', '')).upper()
-                            o_type = str(o.get('type', '')).upper()
+                            o_side = str(o.get('side', o.get('orderSide', ''))).upper()
+                            o_type = str(o.get('type', o.get('orderType', ''))).upper()
                             
-                            if o_type == 'LIMIT' and o_side == tp_side:
-                                o_price = float(o.get('price') or 0)
+                            # BE AGNOSTIC: If it's a SELL order at our TP price, IT IS OUR TP.
+                            # Don't strictly check for 'LIMIT' as BingX might call it 'TAKE_PROFIT_LIMIT' etc.
+                            if o_side == tp_side:
+                                o_price = float(o.get('price') or o.get('stopPrice') or 0)
                                 if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.005:
                                     tp_order_id = str(o.get('id') or o.get('orderId'))
+                                    logger.info(f"BINGX RECONCILE: Recognized existing TP {tp_order_id} for {trade.pair} (Type: {o_type})")
                                     break
                         
                         if tp_order_id:
-                            logger.debug(f"BINGX RECONCILE: Found existing TP {tp_order_id} for {trade.pair}")
                             self._register_order(trade, tp_order_id, 'exit', float(tp_target))
                             has_tp = True
                         
                         if not has_tp and tp_target:
+                            # Log what we saw to find the "bitch"
+                            logger.warning(f"BINGX RECONCILE: Missing TP for {trade.pair}! Saw orders: {[str(o.get('type')) + '@' + str(o.get('price') or o.get('stopPrice')) for o in all_exchange_orders]}")
                             tp_target_rounded = round(float(tp_target), 8)
                             logger.info(f"BINGX RECONCILE: Placing missing TP for {trade.pair} at {tp_target_rounded}")
                             symbol = trade.pair.replace("/", "-").split(":")[0]
@@ -232,70 +237,65 @@ class SignalOnlyStrategy(IStrategy):
                         sl_price = trade.stop_loss
                         target_side = 'SELL' if not trade.is_short else 'BUY'
                         
+                        # 3. Scan ALL exchange orders for matches
                         for o in all_exchange_orders:
                             o_side = str(o.get('side', o.get('orderSide', ''))).upper()
                             o_type = str(o.get('type', o.get('orderType', ''))).upper()
                             
-                            # Log every order for debugging if needed (only if SL not found yet)
-                            logger.debug(f"  Checking Order: side={o_side}, type={o_type}, data={o}")
-                            
-                            # SL is usually NOT a LIMIT order
-                            if o_side == target_side and o_type != 'LIMIT':
-                                # Check every possible price field
-                                prices = [
-                                    o.get('stopPrice'), o.get('triggerPrice'), 
-                                    o.get('price'), o.get('avgPrice'),
-                                    o.get('stop_price'), o.get('trigger_price')
-                                ]
-                                for p in prices:
-                                    try:
-                                        if p and abs(float(p) - float(sl_price)) / float(sl_price) < 0.02:
-                                            sl_order_id = str(o.get('id') or o.get('orderId'))
-                                            break
-                                    except (ValueError, TypeError):
-                                        continue
-                                if sl_order_id:
+                            if o_side == target_side:
+                                # Check every possible price field for SL (stopPrice, triggerPrice, etc)
+                                o_stop_price = float(o.get('stopPrice') or o.get('triggerPrice') or o.get('stop_price') or o.get('price') or 0)
+                                if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.005:
+                                    sl_order_id = str(o.get('id') or o.get('orderId'))
+                                    logger.info(f"BINGX RECONCILE: Recognized existing SL {sl_order_id} for {trade.pair} (Type: {o_type})")
                                     break
                         
                         if sl_order_id:
-                            logger.debug(f"BINGX RECONCILE: Found existing SL {sl_order_id} for {trade.pair}")
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
-                        else:
+                        
+                        if not has_sl and sl_price:
+                            # Log what we saw to find the "bitch"
+                            logger.warning(f"BINGX RECONCILE: Missing SL for {trade.pair}! Saw orders: {[str(o.get('type')) + '@' + str(o.get('stopPrice') or o.get('price')) for o in all_exchange_orders]}")
+                            sl_price_rounded = round(float(sl_price), 8)
+                            
                             # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it perfectly?
                             # We count them and if any exist, we SKIP placing a new one to be safe.
                             non_limit_orders = [o for o in all_exchange_orders if str(o.get('type', o.get('orderType', ''))).upper() != 'LIMIT']
                             if non_limit_orders:
                                 logger.debug(f"BINGX RECONCILE: Found {len(non_limit_orders)} potential SL orders for {trade.pair}. Skipping to avoid duplicates.")
                                 has_sl = True
-                        
-                        if not has_sl and sl_price:
-                            sl_price_rounded = round(float(sl_price), 8)
-                            logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
-                            symbol = trade.pair.replace("/", "-").split(":")[0]
-                            pos_side = "SHORT" if trade.is_short else "LONG"
-                            sl_order = api.swapV2PrivatePostTradeOrder({
-                                "symbol": symbol,
-                                "side": target_side.upper(),
-                                "positionSide": "BOTH",
-                                "type": "STOP_MARKET",
-                                "quantity": trade.amount,
-                                "stopPrice": sl_price_rounded,
-                                "reduceOnly": "true"
-                            })
-                            if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
-                                order_id = sl_order['data'].get('orderId')
-                                if order_id:
-                                    self._register_order(trade, str(order_id), 'stoploss', float(sl_price))
-                                    has_sl = True
+                            else:
+                                logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
+                                symbol = trade.pair.replace("/", "-").split(":")[0]
+                                pos_side = "SHORT" if trade.is_short else "LONG"
+                                sl_order = api.swapV2PrivatePostTradeOrder({
+                                    "symbol": symbol,
+                                    "side": target_side.upper(),
+                                    "positionSide": "BOTH",
+                                    "type": "STOP_MARKET",
+                                    "quantity": trade.amount,
+                                    "stopPrice": sl_price_rounded,
+                                    "reduceOnly": "true"
+                                })
+                                if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
+                                    order_id = sl_order['data'].get('orderId')
+                                    if order_id:
+                                        self._register_order(trade, str(order_id), 'stoploss', float(sl_price))
+                                        has_sl = True
                     except Exception as e_sl:
                         logger.error(f"BINGX RECONCILE: SL Error for {trade.pair}: {e_sl}")
 
         except Exception as e:
             logger.error(f"BINGX RECONCILE: Global error: {e}")
 
-    def _register_order(self, trade, order_id, side, price):
+    def _register_order(self, trade: Trade, order_id: str, side: str, price: float) -> None:
         from freqtrade.persistence import Order, Trade
+        
+        # IDEMPOTENCY CHECK: Don't register if already in trade.orders
+        if any(str(o.order_id) == str(order_id) for o in trade.orders):
+            return
+
         new_order = Order(
             ft_trade_id=trade.id,
             ft_pair=trade.pair,
@@ -316,6 +316,7 @@ class SignalOnlyStrategy(IStrategy):
         )
         trade.orders.append(new_order)
         Trade.commit()
+        logger.info(f"BINGX RECONCILE: Registered exchange order {order_id} to DB for {trade.pair}")
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs) -> str | bool | None:
