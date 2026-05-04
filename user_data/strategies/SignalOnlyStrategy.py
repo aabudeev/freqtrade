@@ -255,34 +255,36 @@ class SignalOnlyStrategy(IStrategy):
                             has_sl = True
                         
                         if not has_sl and sl_price:
-                            # Log what we saw to find the "bitch"
-                            logger.warning(f"BINGX RECONCILE: Missing SL for {trade.pair}! Saw orders: {[str(o.get('type')) + '@' + str(o.get('stopPrice') or o.get('price')) for o in all_exchange_orders]}")
-                            sl_price_rounded = round(float(sl_price), 8)
-                            
                             # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it perfectly?
                             # We count them and if any exist, we SKIP placing a new one to be safe.
-                            non_limit_orders = [o for o in all_exchange_orders if str(o.get('type', o.get('orderType', ''))).upper() != 'LIMIT']
+                            non_limit_orders = [o for o in all_exchange_orders if str(o.get('type', o.get('orderType', ''))).upper() not in ['LIMIT', '']]
+                            
                             if non_limit_orders:
-                                logger.debug(f"BINGX RECONCILE: Found {len(non_limit_orders)} potential SL orders for {trade.pair}. Skipping to avoid duplicates.")
+                                logger.debug(f"BINGX RECONCILE: Found {len(non_limit_orders)} potential SL/Trigger orders for {trade.pair}. Skipping to avoid duplicates.")
                                 has_sl = True
-                            else:
+                            
+                            if not has_sl:
+                                sl_price_rounded = round(float(sl_price), 8)
                                 logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
                                 symbol = trade.pair.replace("/", "-").split(":")[0]
                                 pos_side = "SHORT" if trade.is_short else "LONG"
-                                sl_order = api.swapV2PrivatePostTradeOrder({
-                                    "symbol": symbol,
-                                    "side": target_side.upper(),
-                                    "positionSide": "BOTH",
-                                    "type": "STOP_MARKET",
-                                    "quantity": trade.amount,
-                                    "stopPrice": sl_price_rounded,
-                                    "reduceOnly": "true"
-                                })
-                                if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
-                                    order_id = sl_order['data'].get('orderId')
-                                    if order_id:
-                                        self._register_order(trade, str(order_id), 'stoploss', float(sl_price))
-                                        has_sl = True
+                                try:
+                                    sl_order = api.swapV2PrivatePostTradeOrder({
+                                        "symbol": symbol,
+                                        "side": target_side.upper(),
+                                        "positionSide": "BOTH",
+                                        "type": "STOP_MARKET",
+                                        "quantity": trade.amount,
+                                        "stopPrice": sl_price_rounded,
+                                        "reduceOnly": "true"
+                                    })
+                                    if sl_order and 'data' in sl_order and isinstance(sl_order['data'], dict):
+                                        order_id = sl_order['data'].get('orderId')
+                                        if order_id:
+                                            self._register_order(trade, str(order_id), 'stoploss', float(sl_price))
+                                            has_sl = True
+                                except Exception as e_place_sl:
+                                    logger.error(f"BINGX RECONCILE: Could not place SL for {trade.pair}: {e_place_sl}")
                     except Exception as e_sl:
                         logger.error(f"BINGX RECONCILE: SL Error for {trade.pair}: {e_sl}")
 
