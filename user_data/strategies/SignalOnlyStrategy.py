@@ -110,7 +110,26 @@ class SignalOnlyStrategy(IStrategy):
             api = self.dp._exchange._api
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
             
+            # Fetch all positions once to check for orphans
+            all_positions = []
+            try:
+                all_positions = api.fetch_positions()
+            except Exception as e_pos:
+                logger.error(f"BINGX RECONCILE: Could not fetch positions: {e_pos}")
+
             for trade in open_trades:
+                symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                
+                # --- HEAL ORPHAN TRADES ---
+                # Check if this trade has an active position on exchange
+                is_orphan = True
+                for p in all_positions:
+                    p_symbol = p.get('symbol', '').replace(":", "-")
+                    p_contracts = float(p.get('contracts', 0) or p.get('size', 0) or 0)
+                    if symbol_api in p_symbol and p_contracts != 0:
+                        is_orphan = False
+                        break
+
                 # Fetch orders using CCXT unified and raw methods
                 try:
                     # 1. Fetch regular open orders (Limits)
@@ -119,7 +138,6 @@ class SignalOnlyStrategy(IStrategy):
                     
                     # 2. Fetch pending/trigger orders (Stops)
                     pending_orders = []
-                    symbol_api = trade.pair.replace("/", "-").split(":")[0]
                     
                     # Try raw BingX method which we know exists in this CCXT version
                     try:
@@ -133,6 +151,16 @@ class SignalOnlyStrategy(IStrategy):
                         logger.debug(f"BINGX RECONCILE: Pending fallback error: {e_pend}")
                     
                     all_exchange_orders = open_orders + pending_orders
+                    
+                    # If it's an orphan AND has no orders on exchange -> Close it in DB to prevent crash loop
+                    if is_orphan and not all_exchange_orders:
+                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) is an ORPHAN (no position, no orders). Closing in DB.")
+                        trade.is_open = False
+                        trade.close_date = datetime.now(timezone.utc)
+                        trade.close_reason = "orphan_healed"
+                        Trade.commit()
+                        continue
+
                 except Exception as e_fetch:
                     logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
                     continue
