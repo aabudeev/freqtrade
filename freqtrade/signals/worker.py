@@ -404,6 +404,33 @@ class SignalWorker:
                                             new_id = order_data.get('orderId') if isinstance(order_data, dict) else None
                                             if new_id:
                                                 logger.info(f"TP placed successfully: {new_id}")
+                                                # Register TP order in DB so Freqtrade tracks it
+                                                try:
+                                                    from freqtrade.persistence import Order
+                                                    if not any(str(o.order_id) == str(new_id) for o in trade.orders):
+                                                        tp_order_obj = Order(
+                                                            ft_trade_id=trade.id,
+                                                            ft_pair=trade.pair,
+                                                            ft_is_open=True,
+                                                            ft_order_side=exit_side,  # 'sell' or 'buy'
+                                                            ft_amount=trade.amount,
+                                                            ft_price=tp_price,
+                                                            order_id=str(new_id),
+                                                            status='open',
+                                                            symbol=trade.pair,
+                                                            order_type='limit',
+                                                            side=exit_side,
+                                                            amount=trade.amount,
+                                                            filled=0.0,
+                                                            remaining=trade.amount,
+                                                            price=tp_price,
+                                                            order_date=datetime.now(timezone.utc),
+                                                        )
+                                                        trade.orders.append(tp_order_obj)
+                                                        Trade.commit()
+                                                        logger.info(f"TP order {new_id} registered in DB for {trade.pair}")
+                                                except Exception as e_reg:
+                                                    logger.error(f"Failed to register TP order in DB: {e_reg}")
                                             else:
                                                 logger.error(f"Failed to get orderId from TP response: {tp_order}")
                                         else:
