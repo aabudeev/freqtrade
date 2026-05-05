@@ -298,11 +298,15 @@ class SignalOnlyStrategy(IStrategy):
         if any(str(o.order_id) == str(order_id) for o in trade.orders):
             return
 
+        # Map 'exit' -> trade.exit_side ('sell' for Long, 'buy' for Short)
+        # Freqtrade core only recognizes 'buy', 'sell', 'stoploss' for ft_order_side
+        db_side = trade.exit_side if side == 'exit' else side
+
         new_order = Order(
             ft_trade_id=trade.id,
             ft_pair=trade.pair,
             ft_is_open=True,
-            ft_order_side=side,
+            ft_order_side=db_side,
             ft_amount=trade.amount,
             ft_price=price,
             order_id=order_id,

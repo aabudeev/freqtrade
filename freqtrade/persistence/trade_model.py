@@ -355,7 +355,7 @@ class Order(ModelBase):
             ft_order_side=side,
             ft_pair=pair,
             ft_amount=amount or order.get("amount", None) or 0.0,
-            ft_price=price or order.get("price", None),
+            ft_price=price or order.get("price", None) or order.get("average", None) or 0.0,
         )
 
         o.update_from_ccxt_object(order)
