@@ -32,7 +32,7 @@ class SignalOnlyStrategy(IStrategy):
     # Entry/Exit timeouts
     unfilledtimeout = {
         'entry': 10,
-        'exit': 1440, # 24 hours
+        'exit': 525600, # 365 days — TP orders must not be auto-cancelled
         'exit_timeout_count': 0,
         'unit': 'minutes'
     }
@@ -180,7 +180,7 @@ class SignalOnlyStrategy(IStrategy):
                     continue
 
                 # --- RECONCILE TAKE PROFIT (TP) ---
-                has_tp = any(o.ft_order_side == 'exit' and o.ft_is_open for o in trade.orders)
+                has_tp = any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders)
                 if not has_tp:
                     try:
                         tp_order_id = None
@@ -223,6 +223,8 @@ class SignalOnlyStrategy(IStrategy):
                             })
                             if tp_order and 'data' in tp_order and isinstance(tp_order['data'], dict):
                                 order_id = tp_order['data'].get('orderId')
+                                if not order_id and isinstance(tp_order['data'].get('order'), dict):
+                                    order_id = tp_order['data']['order'].get('orderId')
                                 if order_id:
                                     self._register_order(trade, str(order_id), 'exit', float(tp_target))
                                     has_tp = True

@@ -401,7 +401,14 @@ class SignalWorker:
                                         })
                                         if tp_order and 'data' in tp_order:
                                             order_data = tp_order['data']
-                                            new_id = order_data.get('orderId') if isinstance(order_data, dict) else None
+                                            # BingX may return orderId at top level or nested under 'order' key
+                                            new_id = None
+                                            if isinstance(order_data, dict):
+                                                new_id = order_data.get('orderId')
+                                                if not new_id and isinstance(order_data.get('order'), dict):
+                                                    new_id = order_data['order'].get('orderId')
+                                            if new_id:
+                                                new_id = str(new_id)
                                             if new_id:
                                                 logger.info(f"TP placed successfully: {new_id}")
                                                 # Register TP order in DB so Freqtrade tracks it
@@ -617,8 +624,7 @@ class SignalWorker:
                 if p.get('contracts') and float(p['contracts']) != 0
             ]
 
-            # 2. Sync with ingest_queue and reconcile TP orders
-            self._reconcile_tp_orders()
+            # 2. Check open positions
 
             if not open_positions:
                 return
