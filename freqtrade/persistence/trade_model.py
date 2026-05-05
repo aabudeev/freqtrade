@@ -921,7 +921,16 @@ class LocalTrade:
             if self.is_open and order.safe_filled > 0:
                 logger.info(f"{order_type} is hit for {self}.")
         else:
-            raise ValueError(f"Unknown order type: {order.order_type}")
+            # Auto-fix legacy 'exit' side or any unknown side
+            logger.warning(
+                f"Unknown ft_order_side '{order.ft_order_side}' for order {order.order_id} "
+                f"(order_type={order.order_type}). Mapping to exit_side '{self.exit_side}'."
+            )
+            order.ft_order_side = self.exit_side
+            Trade.commit()
+            if self.is_open:
+                payment = "BUY" if self.is_short else "SELL"
+                logger.info(f"{order_type}_{payment} has been fulfilled for {self}.")
 
         if order.ft_order_side != self.entry_side:
             amount_tr = amount_to_contract_precision(

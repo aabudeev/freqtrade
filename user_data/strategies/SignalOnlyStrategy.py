@@ -172,6 +172,7 @@ class SignalOnlyStrategy(IStrategy):
                     # Only log a warning if position is missing, but NEVER close the trade in DB.
                     if is_orphan and not all_exchange_orders:
                         logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) appears to have NO position and NO orders on exchange! Check manually.")
+                        continue  # Skip TP/SL placement for ghost trades
                     elif is_orphan and all_exchange_orders:
                         logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no position but has orders. Keeping open.")
 
