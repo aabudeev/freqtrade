@@ -281,14 +281,19 @@ class SignalWorker:
                                             logger.warning(f"Signal SL {sl_price} is beyond liquidation {liq_price:.5f}. Capping SL.")
                                             sl_price = liq_price * 1.01 # 1% buffer
 
-                                    trade.stop_loss = sl_price
                                     trade.set_custom_data("signal_sl", str(sl_price))
                                     if trade.open_rate:
-                                        # Freqtrade uses 'stoploss' field for the relative percentage from open rate
-                                        # It should be a negative value (e.g. -0.05 for 5% loss)
-                                        sl_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
-                                        trade.stoploss = -sl_ratio
-                                        trade.stop_loss_pct = -sl_ratio
+                                        # Freqtrade internally divides stop_loss_pct by leverage:
+                                        #   new_loss = price * (1 - abs(stop_loss_pct / leverage))
+                                        # So we must store: stop_loss_pct = price_change_ratio * leverage
+                                        leverage = trade.leverage or 1.0
+                                        sl_price_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
+                                        sl_trade_ratio = sl_price_ratio * leverage
+                                        trade.stop_loss = sl_price
+                                        trade.stoploss = -sl_trade_ratio
+                                        trade.stop_loss_pct = -sl_trade_ratio
+                                        trade.initial_stop_loss = sl_price
+                                        trade.initial_stop_loss_pct = -sl_trade_ratio
                                     
                                     Trade.commit()
                                     
@@ -337,20 +342,28 @@ class SignalWorker:
                                         try:
                                             self.bot.create_stoploss_order(trade, auto_sl_price)
                                             logger.info(f"Auto SL order placed on exchange: {auto_sl_price}")
+                                            leverage = trade.leverage or 1.0
+                                            sl_price_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
+                                            sl_trade_ratio = sl_price_ratio * leverage
                                             trade.stop_loss = auto_sl_price
-                                            sl_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
-                                            trade.stoploss = -sl_ratio
-                                            trade.stop_loss_pct = -sl_ratio
+                                            trade.stoploss = -sl_trade_ratio
+                                            trade.stop_loss_pct = -sl_trade_ratio
+                                            trade.initial_stop_loss = auto_sl_price
+                                            trade.initial_stop_loss_pct = -sl_trade_ratio
                                         except Exception as e2:
                                             logger.error(f"Failed to place auto SL on exchange: {e2}")
                                             logger.warning("Both SL attempts failed. Freqtrade will retry SL placement in its main loop.")
                                 else:
                                     # No SL in signal, calculate auto SL
                                     auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
+                                    leverage = trade.leverage or 1.0
+                                    sl_price_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
+                                    sl_trade_ratio = sl_price_ratio * leverage
                                     trade.stop_loss = auto_sl_price
-                                    sl_ratio = abs((trade.open_rate - auto_sl_price) / trade.open_rate)
-                                    trade.stoploss = -sl_ratio
-                                    trade.stop_loss_pct = -sl_ratio
+                                    trade.stoploss = -sl_trade_ratio
+                                    trade.stop_loss_pct = -sl_trade_ratio
+                                    trade.initial_stop_loss = auto_sl_price
+                                    trade.initial_stop_loss_pct = -sl_trade_ratio
                                     
                                     Trade.commit()
                                     try:
