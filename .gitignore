@@ -121,5 +121,6 @@ ENV/
 
 docker-compose-*.yml
 
+*.md
 *.txt
 *.TXT
