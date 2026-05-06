@@ -15,5 +15,15 @@
             "leverage": 25.0
         }
     },
-    "db_url": "sqlite:////freqtrade/user_data/trades_signals.sqlite"
+    "db_url": "sqlite:////freqtrade/user_data/trades_signals.sqlite",
+    "telegram": {
+        "notification_settings": {
+            "entry": "off",
+            "entry_fill": "on",
+            "entry_cancel": "on",
+            "exit": "off",
+            "exit_fill": "on",
+            "exit_cancel": "on"
+        }
+    }
 }
