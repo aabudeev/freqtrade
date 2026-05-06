@@ -122,5 +122,7 @@ ENV/
 docker-compose-*.yml
 
 *.md
+!EN_*.md
+!RU_*.md
 *.txt
 *.TXT
