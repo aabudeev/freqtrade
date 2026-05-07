@@ -271,8 +271,10 @@ class SignalOnlyStrategy(IStrategy):
                     sl_price = float(signal_sl_str) if signal_sl_str else trade.stop_loss
                     
                     # If Freqtrade core has overwritten our SL with default strategy SL, fix it back
-                    if signal_sl_str and abs(trade.stop_loss - sl_price) > 0.0001:
-                        logger.warning(f"BINGX RECONCILE: Healing corrupted SL for {trade.pair}: {trade.stop_loss} -> {sl_price}")
+                    # Use a relative difference check (0.05%) to avoid rounding spam
+                    relative_diff = abs(trade.stop_loss - sl_price) / sl_price if sl_price > 0 else 0
+                    if signal_sl_str and relative_diff > 0.0005:
+                        logger.warning(f"BINGX RECONCILE: Healing corrupted SL for {trade.pair}: {trade.stop_loss} -> {sl_price} (diff: {relative_diff:.4%})")
                         trade.stop_loss = sl_price
                         # Recalculate ratios so FT doesn't try to 'fix' it again
                         leverage = trade.leverage or 1.0
