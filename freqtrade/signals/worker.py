@@ -206,15 +206,25 @@ class SignalWorker:
 
                             strategy_mode = settings.get('strategy_mode', 'signal')
                             
-                            if strategy_mode == 'hybrid':
-                                logger.info(f"Hybrid mode active. Marking signal {key} for {event.symbol} as waiting_ta.")
-                                self.store.mark_status(key, "waiting_ta")
-                                if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                                    self.bot.rpc.send_msg({
-                                        'type': RPCMessageType.STATUS,
-                                        'status': f"⏳ Signal {event.symbol} is waiting for TA confirmation (Hybrid mode)"
-                                    })
-                                continue
+                            # --- Spread Check BEFORE Entry ---
+                            try:
+                                ticker = self.bot.exchange.fetch_ticker(event.symbol)
+                                bid = ticker.get('bid')
+                                ask = ticker.get('ask')
+                                if bid and ask:
+                                    spread = (ask - bid) / bid
+                                    if spread > 0.02:  # 2% limit
+                                        msg = f"Spread too high ({spread*100:.2f}%) for {event.symbol}. Signal skipped for safety."
+                                        logger.warning(msg)
+                                        self.store.mark_status(key, "failed", msg)
+                                        if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                            self.bot.rpc.send_msg({
+                                                'type': RPCMessageType.STATUS,
+                                                'status': f"⚠️ {msg}"
+                                            })
+                                        continue
+                            except Exception as e_spread:
+                                logger.warning(f"Could not check spread for {event.symbol}: {e_spread}")
 
                             trade = self.bot.rpc._rpc._rpc_force_entry(
                                 pair=event.symbol,
@@ -313,7 +323,7 @@ class SignalWorker:
                                         
                                         if is_past_sl:
                                             logger.warning(f"Price {current_price} already past SL {sl_price}. EMERGENCY EXIT.")
-                                            self.bot.handle_trade_exit(trade, current_price, "stop_loss_hit_immediate")
+                                            self.bot.rpc._rpc._rpc_force_exit(trade.pair, trade.id)
                                             return len(claimed) # Stop processing this trade
                                             
                                     except Exception as e:
@@ -322,9 +332,7 @@ class SignalWorker:
                                         # This often means price is already past or at the SL level.
                                         if "110412" in error_msg or "price should be" in error_msg:
                                             logger.warning(f"SL rejected by exchange (likely price past SL): {e}. EMERGENCY EXIT.")
-                                            ticker = self.bot.exchange.fetch_ticker(trade.pair)
-                                            exit_price = ticker.get('last') or sl_price
-                                            self.bot.handle_trade_exit(trade, exit_price, "stop_loss_rejected_market_exit")
+                                            self.bot.rpc._rpc._rpc_force_exit(trade.pair, trade.id)
                                             return len(claimed)
                                             
                                         logger.error(f"Failed to place signal SL on exchange: {e}")
@@ -374,7 +382,7 @@ class SignalWorker:
                                             if (trade.is_short and current_price >= auto_sl_price) or \
                                                (not trade.is_short and current_price <= auto_sl_price):
                                                 logger.warning(f"Price {current_price} already past Auto SL {auto_sl_price}. EMERGENCY EXIT.")
-                                                self.bot.handle_trade_exit(trade, current_price, "auto_stop_loss_hit_immediate")
+                                                self.bot.rpc._rpc._rpc_force_exit(trade.pair, trade.id)
                                                 return len(claimed)
 
                                     except Exception as e:
