@@ -92,23 +92,18 @@ class SignalOnlyStrategy(IStrategy):
         signal_sl_str = trade.get_custom_data("signal_sl")
         if signal_sl_str:
             sl_price = float(signal_sl_str)
-            # Freqtrade expects a profit ratio. 
-            # For LONG: (sl_price / open_rate) - 1
-            # For SHORT: 1 - (sl_price / open_rate)
-            # But wait, custom_stoploss returns the ratio relative to OPEN_RATE usually, 
-            # or if it's the standard return, it's relative to current_rate.
-            # Actually, returning a fixed ratio relative to 1.0 (no matter the current_rate) 
-            # works best to keep a fixed SL price.
             
-            # Freqtrade logic for stoploss: 
-            # price_at_risk = open_rate * (1 + (stoploss / leverage))
-            # So: stoploss = (sl_price / open_rate - 1) * leverage
+            # Freqtrade's custom_stoploss expects a ratio relative to current_rate.
+            # To keep the absolute sl_price fixed, we must recalculate the ratio
+            # based on the current market price (current_rate).
             
             leverage = trade.leverage or 1.0
             if not trade.is_short:
-                ratio = (sl_price / trade.open_rate - 1) * leverage
+                # LONG: (sl_price / current_rate - 1) * leverage
+                ratio = (sl_price / current_rate - 1) * leverage
             else:
-                ratio = (1 - sl_price / trade.open_rate) * leverage
+                # SHORT: (1 - sl_price / current_rate) * leverage
+                ratio = (1 - sl_price / current_rate) * leverage
                 
             return ratio
 
