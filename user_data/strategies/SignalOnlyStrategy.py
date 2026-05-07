@@ -42,11 +42,13 @@ class SignalOnlyStrategy(IStrategy):
     _reconcile_interval = 300 # seconds
 
     minimal_roi = {"0": 10.0}  # Effectively disabled
-    stoploss = -0.99           # Effectively disabled
+    stoploss = -0.99           # Fallback only
+    
+    # --- DYNAMIC STOPLOSS ENABLED ---
+    use_custom_stoploss = True
     
     # TRAILING STOP DISABLED
     trailing_stop = False
-    use_custom_stoploss = False
     process_only_new_candles = False
     use_exit_signal = False
     startup_candle_count = 20
@@ -80,6 +82,38 @@ class SignalOnlyStrategy(IStrategy):
         dataframe.loc[:, "exit_long"] = 0
         dataframe.loc[:, "exit_short"] = 0
         return dataframe
+
+    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
+                        current_rate: float, current_profit: float, **kwargs) -> float:
+        """
+        Force Freqtrade to use our signal-based stop loss.
+        Returns the stoploss as a percentage (negative) of current_rate.
+        """
+        signal_sl_str = trade.get_custom_data("signal_sl")
+        if signal_sl_str:
+            sl_price = float(signal_sl_str)
+            # Freqtrade expects a profit ratio. 
+            # For LONG: (sl_price / open_rate) - 1
+            # For SHORT: 1 - (sl_price / open_rate)
+            # But wait, custom_stoploss returns the ratio relative to OPEN_RATE usually, 
+            # or if it's the standard return, it's relative to current_rate.
+            # Actually, returning a fixed ratio relative to 1.0 (no matter the current_rate) 
+            # works best to keep a fixed SL price.
+            
+            # Freqtrade logic for stoploss: 
+            # price_at_risk = open_rate * (1 + (stoploss / leverage))
+            # So: stoploss = (sl_price / open_rate - 1) * leverage
+            
+            leverage = trade.leverage or 1.0
+            if not trade.is_short:
+                ratio = (sl_price / trade.open_rate - 1) * leverage
+            else:
+                ratio = (1 - sl_price / trade.open_rate) * leverage
+                
+            return ratio
+
+        # Fallback to strategy default
+        return self.stoploss
 
     def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
         """
@@ -253,7 +287,8 @@ class SignalOnlyStrategy(IStrategy):
                         trade.stop_loss_pct = -sl_trade_ratio
                         trade.initial_stop_loss = sl_price
                         trade.initial_stop_loss_pct = -sl_trade_ratio
-                        Trade.commit()
+                        # Use session commit to ensure it hits the disk
+                        Trade.session.commit()
 
                     if not has_sl:
                         target_side = 'SELL' if not trade.is_short else 'BUY'
