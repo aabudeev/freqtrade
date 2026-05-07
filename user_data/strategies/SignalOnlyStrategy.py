@@ -233,11 +233,29 @@ class SignalOnlyStrategy(IStrategy):
                         logger.error(f"BINGX RECONCILE: TP Error for {trade.pair}: {e_tp}")
 
                 # --- RECONCILE STOP LOSS (SL) ---
-                has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
-                if not has_sl:
-                    try:
-                        sl_order_id = None
-                        sl_price = trade.stop_loss
+                try:
+                    sl_order_id = None
+                    has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
+                    
+                    # Get the 'source of truth' for SL from custom_data
+                    signal_sl_str = trade.get_custom_data("signal_sl")
+                    sl_price = float(signal_sl_str) if signal_sl_str else trade.stop_loss
+                    
+                    # If Freqtrade core has overwritten our SL with default strategy SL, fix it back
+                    if signal_sl_str and abs(trade.stop_loss - sl_price) > 0.0001:
+                        logger.warning(f"BINGX RECONCILE: Healing corrupted SL for {trade.pair}: {trade.stop_loss} -> {sl_price}")
+                        trade.stop_loss = sl_price
+                        # Recalculate ratios so FT doesn't try to 'fix' it again
+                        leverage = trade.leverage or 1.0
+                        sl_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
+                        sl_trade_ratio = sl_ratio * leverage
+                        trade.stoploss = -sl_trade_ratio
+                        trade.stop_loss_pct = -sl_trade_ratio
+                        trade.initial_stop_loss = sl_price
+                        trade.initial_stop_loss_pct = -sl_trade_ratio
+                        Trade.commit()
+
+                    if not has_sl:
                         target_side = 'SELL' if not trade.is_short else 'BUY'
                         
                         # 3. Scan ALL exchange orders for matches
@@ -270,7 +288,6 @@ class SignalOnlyStrategy(IStrategy):
                                 sl_price_rounded = round(float(sl_price), 8)
                                 logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
                                 symbol = trade.pair.replace("/", "-").split(":")[0]
-                                pos_side = "SHORT" if trade.is_short else "LONG"
                                 try:
                                     sl_order = api.swapV2PrivatePostTradeOrder({
                                         "symbol": symbol,
@@ -288,8 +305,8 @@ class SignalOnlyStrategy(IStrategy):
                                             has_sl = True
                                 except Exception as e_place_sl:
                                     logger.error(f"BINGX RECONCILE: Could not place SL for {trade.pair}: {e_place_sl}")
-                    except Exception as e_sl:
-                        logger.error(f"BINGX RECONCILE: SL Error for {trade.pair}: {e_sl}")
+                except Exception as e_sl:
+                    logger.error(f"BINGX RECONCILE: SL Error for {trade.pair}: {e_sl}")
 
         except Exception as e:
             logger.error(f"BINGX RECONCILE: Global error: {e}")
