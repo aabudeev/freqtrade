@@ -37,8 +37,6 @@
                                 <v-card-title class="headline blue--text text--lighten-2">
                                     <v-icon left color="blue">mdi-database</v-icon>
                                     Database Viewer
-                                    <v-spacer></v-spacer>
-                                    <v-btn text small href="/signals_dashboard" color="grey">Back to Signals</v-btn>
                                 </v-card-title>
 
                                 <v-row class="mt-4">
@@ -84,7 +82,7 @@
                         </v-col>
                     </v-row>
 
-                    <v-row v-if="results.columns.length > 0">
+                    <v-row v-if="results.columns && results.columns.length > 0">
                         <v-col cols="12">
                             <v-card dark elevation="4">
                                 <v-card-title class="subtitle-1">
@@ -119,6 +117,58 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
     <script>
+        // Shared logic from signals dashboard to handle authentication properly
+        let ftToken = '';
+        let ftRefreshToken = '';
+
+        async function silentLogin() {
+            let username = '', password = '';
+            try {
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const val = localStorage.getItem(key);
+                    if (!val) continue;
+                    try {
+                        const parsed = JSON.parse(val);
+                        if (parsed && parsed.openAPIPassword) {
+                            password = parsed.openAPIPassword;
+                            username = parsed.username || 'freqtrade';
+                        }
+                    } catch (e) {}
+                }
+            } catch (e) {}
+
+            if (!username || !password) return false;
+
+            try {
+                const res = await fetch('/api/v1/token/login', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Basic ' + btoa(username + ':' + password) }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    ftToken = data.access_token;
+                    ftRefreshToken = data.refresh_token || '';
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        }
+
+        async function apiFetch(url, options = {}) {
+            if (!ftToken) await silentLogin();
+            options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
+            let res = await fetch(url, options);
+            if (res.status === 401) {
+                const loginOk = await silentLogin();
+                if (loginOk) {
+                    options.headers['Authorization'] = `Bearer ${ftToken}`;
+                    res = await fetch(url, options);
+                }
+            }
+            return res;
+        }
+
         new Vue({
             el: '#app',
             vuetify: new Vuetify(),
@@ -129,23 +179,44 @@
                 sqlQuery: 'SELECT * FROM trades LIMIT 10',
                 limit: 50,
                 error: null,
-                results: { columns: [], rows: [], count: 0 },
-                apiToken: ''
+                results: { columns: [], rows: [], count: 0 }
             },
-            mounted() {
-                this.apiToken = localStorage.getItem('at'); // Freqtrade stores token in localStorage
-                this.fetchDbList();
+            async mounted() {
+                // Initial token fetch from localStorage (emulate FreqUI behavior)
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        const val = localStorage.getItem(key);
+                        if (val && typeof val === 'string' && val.includes('"accessToken"')) {
+                            const parsed = JSON.parse(val);
+                            if (parsed.accessToken) {
+                                ftToken = parsed.accessToken;
+                                ftRefreshToken = parsed.refreshToken;
+                            }
+                        }
+                    }
+                } catch (e) {}
+
+                await this.fetchDbList();
                 this.loadLastQuery();
             },
             methods: {
                 async fetchDbList() {
                     try {
-                        const response = await fetch('/api/v1/db_list', {
-                            headers: { 'Authorization': `Bearer ${this.apiToken}` }
-                        });
-                        this.dbList = await response.json();
-                        if (this.dbList.length > 0 && !this.selectedDb) {
-                            this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
+                        const response = await apiFetch('/api/v1/db_list');
+                        if (!response.ok) {
+                            const errData = await response.json();
+                            this.error = "API Error: " + (errData.detail || response.statusText);
+                            return;
+                        }
+                        const data = await response.json();
+                        if (Array.isArray(data)) {
+                            this.dbList = data;
+                            if (this.dbList.length > 0 && !this.selectedDb) {
+                                this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
+                            }
+                        } else {
+                            this.error = "Invalid API response format: expected array.";
                         }
                     } catch (e) {
                         this.error = "Failed to fetch DB list: " + e;
@@ -160,12 +231,9 @@
                             query += ' LIMIT ' + this.limit;
                         }
 
-                        const response = await fetch('/api/v1/db_query', {
+                        const response = await apiFetch('/api/v1/db_query', {
                             method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${this.apiToken}`
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ db: this.selectedDb, sql: query })
                         });
                         const data = await response.json();
