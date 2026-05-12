@@ -39,7 +39,7 @@
                                     Database Viewer
                                 </v-card-title>
 
-                                <v-row class="mt-4">
+                                <v-row class="mt-4" v-if="ftToken">
                                     <v-col cols="12" md="4">
                                         <v-select
                                             v-model="selectedDb"
@@ -67,7 +67,15 @@
                                     </v-col>
                                 </v-row>
 
+                                <div v-if="!ftToken" class="text-center pa-4">
+                                    <v-alert type="warning" border="left" dense outlined>
+                                        Авторизация не найдена в localStorage.
+                                    </v-alert>
+                                    <v-btn color="blue" @click="showLogin = true">Ввести пароль вручную</v-btn>
+                                </div>
+
                                 <textarea 
+                                    v-if="ftToken"
                                     v-model="sqlQuery" 
                                     class="sql-editor mt-2" 
                                     placeholder="SELECT * FROM trades LIMIT 10..."
@@ -110,6 +118,20 @@
                         </v-col>
                     </v-row>
                 </v-container>
+
+                <v-dialog v-model="showLogin" max-width="400">
+                    <v-card dark>
+                        <v-card-title>Manual Login</v-card-title>
+                        <v-card-text>
+                            <v-text-field v-model="manualUser" label="Username" outlined dense></v-text-field>
+                            <v-text-field v-model="manualPass" label="Password" type="password" outlined dense></v-text-field>
+                        </v-card-text>
+                        <v-card-actions>
+                            <v-spacer></v-spacer>
+                            <v-btn color="blue" @click="doManualLogin">Login</v-btn>
+                        </v-card-actions>
+                    </v-card>
+                </v-dialog>
             </v-main>
         </v-app>
     </div>
@@ -119,33 +141,32 @@
     <script>
         let ftToken = '';
         let ftRefreshToken = '';
-        let _refreshTimer = null;
 
-        async function silentLogin() {
-            let username = '', password = '';
-            try {
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    const val = localStorage.getItem(key);
-                    if (!val) continue;
-                    try {
-                        const parsed = JSON.parse(val);
-                        if (parsed && parsed.openAPIPassword) {
-                            password = parsed.openAPIPassword;
-                            username = parsed.username || 'freqtrade';
-                        }
-                        if (parsed && parsed.auth && parsed.auth.password) {
-                            password = parsed.auth.password;
-                            username = parsed.auth.username || 'freqtrade';
-                        }
-                    } catch (e) {}
-                }
-            } catch (e) {}
-
+        async function silentLogin(u, p) {
+            let username = u, password = p;
             if (!username || !password) {
-                console.warn('DB Viewer: No credentials found in localStorage');
-                return false;
+                console.log('Searching creds in localStorage keys:', Object.keys(localStorage));
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        const val = localStorage.getItem(key);
+                        if (!val) continue;
+                        try {
+                            const parsed = JSON.parse(val);
+                            if (parsed && parsed.openAPIPassword) {
+                                password = parsed.openAPIPassword;
+                                username = parsed.username || 'freqtrade';
+                            }
+                            if (parsed && parsed.auth && parsed.auth.password) {
+                                password = parsed.auth.password;
+                                username = parsed.auth.username || 'freqtrade';
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
             }
+
+            if (!username || !password) return false;
 
             try {
                 const res = await fetch('/api/v1/token/login', {
@@ -156,20 +177,19 @@
                     const data = await res.json();
                     ftToken = data.access_token;
                     ftRefreshToken = data.refresh_token || '';
-                    console.log('DB Viewer: Silent login OK');
+                    localStorage.setItem('ft_manual_token', ftToken); // Save for later
                     return true;
                 }
-            } catch (e) {
-                console.error('DB Viewer: Silent login failed', e);
-            }
+            } catch (e) {}
             return false;
         }
 
         async function apiFetch(url, options = {}) {
+            if (!ftToken) ftToken = localStorage.getItem('ft_manual_token') || '';
+            
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
             if (res.status === 401) {
-                console.warn('DB Viewer: 401. Attempting silent login recovery...');
                 const loginOk = await silentLogin();
                 if (loginOk) {
                     options.headers['Authorization'] = `Bearer ${ftToken}`;
@@ -183,6 +203,10 @@
             el: '#app',
             vuetify: new Vuetify(),
             data: {
+                ftToken: '',
+                showLogin: false,
+                manualUser: 'freqtrade',
+                manualPass: '',
                 loading: false,
                 dbList: [],
                 selectedDb: '',
@@ -192,6 +216,16 @@
                 results: { columns: [], rows: [], count: 0 }
             },
             methods: {
+                async doManualLogin() {
+                    const ok = await silentLogin(this.manualUser, this.manualPass);
+                    if (ok) {
+                        this.ftToken = ftToken;
+                        this.showLogin = false;
+                        this.fetchDbList();
+                    } else {
+                        alert('Login failed');
+                    }
+                },
                 async fetchDbList() {
                     try {
                         const response = await apiFetch('/api/v1/db_list');
@@ -207,8 +241,6 @@
                                 this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
                                 this.loadLastQuery();
                             }
-                        } else {
-                            this.error = "Invalid API response format: expected array.";
                         }
                     } catch (e) {
                         this.error = "Failed to fetch DB list: " + e;
@@ -254,49 +286,40 @@
             }
         });
 
-        // Robust token discovery like in signals_dashboard.html
         document.addEventListener('DOMContentLoaded', async () => {
-            // 1. Try Pinia/Vuex stores
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                const val = localStorage.getItem(key);
-                if (!val) continue;
-                try {
-                    const parsed = JSON.parse(val);
-                    if (parsed && parsed.accessToken) {
-                        ftToken = parsed.accessToken;
-                        ftRefreshToken = parsed.refreshToken || '';
-                        break;
-                    }
-                    if (parsed && parsed.auth) {
-                        ftToken = parsed.auth.token || parsed.auth.access_token || '';
-                        ftRefreshToken = parsed.auth.refresh_token || '';
-                        if (ftToken) break;
-                    }
-                } catch (e) {}
-            }
+            // Check direct 'auth' key first
+            try {
+                const authStr = localStorage.getItem('auth');
+                if (authStr) {
+                    const auth = JSON.parse(authStr);
+                    if (auth && auth.token) ftToken = auth.token;
+                }
+            } catch (e) {}
 
-            // 2. Brute-force find any JWT
             if (!ftToken) {
                 for (let i = 0; i < localStorage.length; i++) {
                     const val = localStorage.getItem(localStorage.key(i));
-                    if (val && typeof val === 'string' && val.startsWith('eyJ')) {
-                        ftToken = val;
-                        break;
-                    }
+                    if (!val) continue;
+                    try {
+                        const parsed = JSON.parse(val);
+                        if (parsed && parsed.accessToken) { ftToken = parsed.accessToken; break; }
+                        if (parsed && parsed.auth && parsed.auth.token) { ftToken = parsed.auth.token; break; }
+                    } catch (e) {}
                 }
             }
 
-            // 3. Last resort: silent login
             if (!ftToken) {
-                await silentLogin();
+                for (let i = 0; i < localStorage.length; i++) {
+                    const val = localStorage.getItem(localStorage.key(i));
+                    if (val && typeof val === 'string' && val.startsWith('eyJ')) { ftToken = val; break; }
+                }
             }
 
+            if (!ftToken) await silentLogin();
+
             if (ftToken) {
-                console.log('DB Viewer: Auth successful');
+                vm.ftToken = ftToken;
                 vm.fetchDbList();
-            } else {
-                vm.error = 'Не удалось авторизоваться. Пожалуйста, залогиньтесь в основной FreqUI.';
             }
         });
     </script>
