@@ -133,8 +133,9 @@ class TelegramSignalsListener:
             logger.info("Telegram signals listener connected (peer %s)", peer)
 
             # Sync history (last 50 messages) on startup
-            logger.info("Loading signal history on startup...")
-            await self._sync_history(entity)
+            # We use is_startup=True to only pick up messages from the last 10 minutes
+            logger.info("Loading signal history on startup (ignoring messages older than 10m)...")
+            await self._sync_history(entity, is_startup=True)
 
             # --- PERIODIC SYNC TASK ---
             # To prevent missing messages during proxy drops
@@ -164,21 +165,40 @@ class TelegramSignalsListener:
                     pass
                 self._client = None
 
-    async def _ingest_message(self, msg) -> None:
+    async def _ingest_message(self, msg, force_new=False) -> None:
         from freqtrade.signals.telethon_message import message_dict_to_ingest_event
+        from datetime import datetime, timezone
         try:
             d = msg.to_dict()
             ev = message_dict_to_ingest_event(d)
-            if ev and self._store.enqueue(ev):
+            if not ev:
+                return
+
+            # --- COLD START FILTER ---
+            # If force_new is True, we only ingest if signal is very recent (e.g. 10 mins)
+            if force_new:
+                now = datetime.now(timezone.utc)
+                # ev.occurred_at is already UTC-aware if parser did it right
+                occ = ev.occurred_at
+                if occ.tzinfo is None:
+                    occ = occ.replace(tzinfo=timezone.utc)
+                
+                age_seconds = (now - occ).total_seconds()
+                if age_seconds > 600: # 10 minutes
+                    logger.debug("Cold start: skipping history message %s (age %ds)", ev.idempotency_key, age_seconds)
+                    return
+
+            if self._store.enqueue(ev):
                 logger.info("Signals queue: enqueued %s (from %s)", ev.idempotency_key, ev.occurred_at)
         except Exception:
             logger.exception("Error ingesting message")
 
-    async def _sync_history(self, entity, limit=50) -> None:
+    async def _sync_history(self, entity, limit=50, is_startup=False) -> None:
         async for msg in self._client.iter_messages(entity, limit=limit):
             if not msg:
                 continue
-            await self._ingest_message(msg)
+            # On startup sync, we apply the 'force_new' filter to avoid old signals
+            await self._ingest_message(msg, force_new=is_startup)
 
     def shutdown(self) -> None:
         self._running = False

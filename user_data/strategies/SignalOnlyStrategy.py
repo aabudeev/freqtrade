@@ -228,10 +228,20 @@ class SignalOnlyStrategy(IStrategy):
                             # Don't strictly check for 'LIMIT' as BingX might call it 'TAKE_PROFIT_LIMIT' etc.
                             if o_side == tp_side:
                                 o_price = float(o.get('price') or o.get('stopPrice') or 0)
-                                if tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.005:
+                                o_amount = float(o.get('amount') or o.get('quantity') or 0)
+                                
+                                # Check price (within 0.5%) AND amount (within 0.1%)
+                                price_match = tp_target and abs(o_price - float(tp_target)) / float(tp_target) < 0.005
+                                amount_match = abs(o_amount - trade.amount) / trade.amount < 0.001 if trade.amount > 0 else False
+                                
+                                if price_match and amount_match:
                                     tp_order_id = str(o.get('id') or o.get('orderId'))
-                                    logger.info(f"BINGX RECONCILE: Recognized existing TP {tp_order_id} for {trade.pair} (Type: {o_type})")
+                                    logger.info(f"BINGX RECONCILE: Recognized existing TP {tp_order_id} for {trade.pair} (Type: {o_type}, Amount: {o_amount})")
                                     break
+                                elif price_match and not amount_match:
+                                    logger.warning(f"BINGX RECONCILE: Found TP for {trade.pair} with WRONG AMOUNT: {o_amount} vs expected {trade.amount}. Will recreate.")
+                                    # We don't break here, so we might find a better match or trigger recreate below
+                                    pass
                         
                         if tp_order_id:
                             self._register_order(trade, tp_order_id, 'exit', float(tp_target))
@@ -300,10 +310,19 @@ class SignalOnlyStrategy(IStrategy):
                             if o_side == target_side:
                                 # Check every possible price field for SL (stopPrice, triggerPrice, etc)
                                 o_stop_price = float(o.get('stopPrice') or o.get('triggerPrice') or o.get('stop_price') or o.get('price') or 0)
-                                if sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.005:
+                                o_amount = float(o.get('amount') or o.get('quantity') or 0)
+
+                                # Check price (within 0.5%) AND amount (within 0.1%)
+                                price_match = sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.005
+                                amount_match = abs(o_amount - trade.amount) / trade.amount < 0.001 if trade.amount > 0 else False
+
+                                if price_match and amount_match:
                                     sl_order_id = str(o.get('id') or o.get('orderId'))
-                                    logger.info(f"BINGX RECONCILE: Recognized existing SL {sl_order_id} for {trade.pair} (Type: {o_type})")
+                                    logger.info(f"BINGX RECONCILE: Recognized existing SL {sl_order_id} for {trade.pair} (Type: {o_type}, Amount: {o_amount})")
                                     break
+                                elif price_match and not amount_match:
+                                    logger.warning(f"BINGX RECONCILE: Found SL for {trade.pair} with WRONG AMOUNT: {o_amount} vs expected {trade.amount}.")
+                                    pass
                         
                         if sl_order_id:
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))

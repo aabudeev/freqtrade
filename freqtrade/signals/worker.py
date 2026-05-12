@@ -129,13 +129,13 @@ class SignalWorker:
                         logger.info(f"Ignoring non-signal message {key}")
                         self.store.mark_status(key, "skipped", "Non-signal message")
                 else:
-                    # TTL check (4 hours)
+                    # TTL check (1 hour)
                     occ_dt = datetime.fromisoformat(row['occurred_at'])
                     # occurred_at is stored as naive UTC in DB
                     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                     age_seconds = (now_utc - occ_dt).total_seconds()
                     
-                    if age_seconds > 4 * 3600:
+                    if age_seconds > 1 * 3600:
                         logger.warning(f"Signal {key} is too old ({age_seconds/3600:.1f}h). Skipping.")
                         self.store.mark_status(key, "skipped", f"TTL expired: age {age_seconds/3600:.1f}h")
                         continue
