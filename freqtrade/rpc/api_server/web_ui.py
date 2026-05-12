@@ -54,12 +54,17 @@ async def show_db():
     """
     html_path = Path(__file__).parent / "show_db.html"
     if not html_path.exists():
-        # Fallback
+        # Fallback 1
+        html_path = Path("/freqtrade/fork/freqtrade/rpc/api_server/show_db.html")
+    if not html_path.exists():
+        # Fallback 2
         html_path = Path("/freqtrade/freqtrade/rpc/api_server/show_db.html")
         
     if html_path.exists():
         return html_path.read_text(encoding="utf-8")
-    return "DB Viewer HTML file not found."
+    
+    logger.error(f"DB Viewer HTML file not found. Searched in: {html_path.parent}")
+    return f"DB Viewer HTML file not found. Searched in: {html_path.parent}"
 
 
 @router_ui.get("/{rest_of_path:path}")

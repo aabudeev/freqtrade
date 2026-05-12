@@ -920,6 +920,17 @@
                             const l = lineSeries.createPriceLine({ price: parseFloat(sl), color: '#f6465d', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'SL' });
                             priceLines.push(l);
                         }
+                        if (entryStr && entryStr !== '--') {
+                            const l = lineSeries.createPriceLine({ 
+                                price: parseFloat(entryStr), 
+                                color: '#fbbf24', 
+                                lineWidth: 1, 
+                                lineStyle: 0, 
+                                axisLabelVisible: true, 
+                                title: 'Entry' 
+                            });
+                            priceLines.push(l);
+                        }
 
                         chart.timeScale().fitContent();
                         return; // success
