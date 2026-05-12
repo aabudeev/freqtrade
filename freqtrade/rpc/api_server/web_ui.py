@@ -47,6 +47,21 @@ async def signals_dashboard():
     return "Dashboard HTML file not found."
 
 
+@router_ui.get("/databases", response_class=HTMLResponse)
+async def show_db():
+    """
+    Отдает HTML страницу для просмотра и выполнения запросов к БД.
+    """
+    html_path = Path(__file__).parent / "show_db.html"
+    if not html_path.exists():
+        # Fallback
+        html_path = Path("/freqtrade/freqtrade/rpc/api_server/show_db.html")
+        
+    if html_path.exists():
+        return html_path.read_text(encoding="utf-8")
+    return "DB Viewer HTML file not found."
+
+
 @router_ui.get("/{rest_of_path:path}")
 async def index_html(rest_of_path: str):
     """
@@ -75,21 +90,37 @@ async def index_html(rest_of_path: str):
     <script>
     (function() {
         function addSignalsLink() {
-            if (document.getElementById('nav-signals')) return;
-
             // Ищем все элементы, которые могут быть кнопками меню
             const items = document.querySelectorAll('.v-tab, .v-list-item, .v-btn, a');
+            let dashboardLink = null;
             for (let item of items) {
-                if (item.textContent.trim() === 'Dashboard' || item.textContent.trim() === 'Панель') {
+                const text = item.textContent.trim();
+                if (text === 'Dashboard' || text === 'Панель') {
+                    dashboardLink = item;
+                    break;
+                }
+            }
+
+            if (dashboardLink) {
+                // Вставляем Signals если нет
+                if (!document.getElementById('nav-signals')) {
                     const link = document.createElement('a');
                     link.id = 'nav-signals';
                     link.href = '/signals_dashboard';
                     link.className = 'v-btn v-btn--flat v-btn--text theme--dark v-size--default';
                     link.innerHTML = '<span class="v-btn__content">Signals</span>';
-                    
-                    item.parentNode.insertBefore(link, item.nextSibling);
-                    console.log('Signals link injected!');
-                    break;
+                    dashboardLink.parentNode.insertBefore(link, dashboardLink.nextSibling);
+                }
+                
+                // Вставляем Databases если нет
+                if (!document.getElementById('nav-databases')) {
+                    const link = document.createElement('a');
+                    link.id = 'nav-databases';
+                    link.href = '/databases';
+                    link.className = 'v-btn v-btn--flat v-btn--text theme--dark v-size--default';
+                    link.innerHTML = '<span class="v-btn__content">DataBases</span>';
+                    const signalsLink = document.getElementById('nav-signals');
+                    signalsLink.parentNode.insertBefore(link, signalsLink.nextSibling);
                 }
             }
         }

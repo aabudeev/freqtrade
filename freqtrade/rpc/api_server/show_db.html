@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Freqtrade DB Viewer</title>
+    <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@6.x/css/materialdesignicons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css" rel="stylesheet">
+    <style>
+        .v-application { background-color: #121212 !important; }
+        .sql-editor {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background-color: #1e1e1e !important;
+            color: #d4d4d4 !important;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            width: 100%;
+            min-height: 150px;
+            outline: none;
+        }
+        .sql-editor:focus { border-color: #2196F3; }
+        .result-table { background-color: #1e1e1e !important; }
+        .result-table th { color: #2196F3 !important; text-transform: uppercase; font-size: 0.8rem; }
+        .error-msg { color: #ff5252; font-family: monospace; white-space: pre-wrap; background: #2a1212; padding: 10px; border-radius: 4px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <v-app>
+            <v-main>
+                <v-container fluid>
+                    <v-row>
+                        <v-col cols="12">
+                            <v-card dark elevation="4" class="pa-4">
+                                <v-card-title class="headline blue--text text--lighten-2">
+                                    <v-icon left color="blue">mdi-database</v-icon>
+                                    Database Viewer
+                                    <v-spacer></v-spacer>
+                                    <v-btn text small href="/signals_dashboard" color="grey">Back to Signals</v-btn>
+                                </v-card-title>
+
+                                <v-row class="mt-4">
+                                    <v-col cols="12" md="4">
+                                        <v-select
+                                            v-model="selectedDb"
+                                            :items="dbList"
+                                            label="Select Database"
+                                            outlined
+                                            dense
+                                            prepend-inner-icon="mdi-database-outline"
+                                            @change="loadLastQuery"
+                                        ></v-select>
+                                    </v-col>
+                                    <v-col cols="12" md="2">
+                                        <v-text-field
+                                            v-model="limit"
+                                            label="Rows Limit"
+                                            type="number"
+                                            outlined
+                                            dense
+                                        ></v-text-field>
+                                    </v-col>
+                                    <v-col cols="12" md="6" class="text-right">
+                                        <v-btn color="blue darken-2" @click="executeQuery" :loading="loading" :disabled="!selectedDb">
+                                            <v-icon left>mdi-play</v-icon> Execute SQL
+                                        </v-btn>
+                                    </v-col>
+                                </v-row>
+
+                                <textarea 
+                                    v-model="sqlQuery" 
+                                    class="sql-editor mt-2" 
+                                    placeholder="SELECT * FROM trades LIMIT 10..."
+                                    spellcheck="false"
+                                ></textarea>
+
+                                <div v-if="error" class="error-msg">
+                                    <v-icon small color="red" left>mdi-alert-circle</v-icon>
+                                    {{ error }}
+                                </div>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+
+                    <v-row v-if="results.columns.length > 0">
+                        <v-col cols="12">
+                            <v-card dark elevation="4">
+                                <v-card-title class="subtitle-1">
+                                    Results: {{ results.count }} rows
+                                    <v-spacer></v-spacer>
+                                    <v-btn icon small @click="copyToClipboard"><v-icon>mdi-content-copy</v-icon></v-btn>
+                                </v-card-title>
+                                <v-simple-table dense class="result-table">
+                                    <template v-slot:default>
+                                        <thead>
+                                            <tr>
+                                                <th v-for="col in results.columns" :key="col">{{ col }}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="(row, i) in results.rows" :key="i">
+                                                <td v-for="col in results.columns" :key="col">
+                                                    {{ row[col] === null ? 'NULL' : row[col] }}
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </template>
+                                </v-simple-table>
+                            </v-card>
+                        </v-col>
+                    </v-row>
+                </v-container>
+            </v-main>
+        </v-app>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
+    <script>
+        new Vue({
+            el: '#app',
+            vuetify: new Vuetify(),
+            data: {
+                loading: false,
+                dbList: [],
+                selectedDb: '',
+                sqlQuery: 'SELECT * FROM trades LIMIT 10',
+                limit: 50,
+                error: null,
+                results: { columns: [], rows: [], count: 0 },
+                apiToken: ''
+            },
+            mounted() {
+                this.apiToken = localStorage.getItem('at'); // Freqtrade stores token in localStorage
+                this.fetchDbList();
+                this.loadLastQuery();
+            },
+            methods: {
+                async fetchDbList() {
+                    try {
+                        const response = await fetch('/api/v1/db_list', {
+                            headers: { 'Authorization': `Bearer ${this.apiToken}` }
+                        });
+                        this.dbList = await response.json();
+                        if (this.dbList.length > 0 && !this.selectedDb) {
+                            this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
+                        }
+                    } catch (e) {
+                        this.error = "Failed to fetch DB list: " + e;
+                    }
+                },
+                async executeQuery() {
+                    this.loading = true;
+                    this.error = null;
+                    try {
+                        let query = this.sqlQuery;
+                        if (!query.toUpperCase().includes('LIMIT') && query.toUpperCase().includes('SELECT')) {
+                            query += ' LIMIT ' + this.limit;
+                        }
+
+                        const response = await fetch('/api/v1/db_query', {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.apiToken}`
+                            },
+                            body: JSON.stringify({ db: this.selectedDb, sql: query })
+                        });
+                        const data = await response.json();
+                        if (data.error) {
+                            this.error = data.error;
+                            this.results = { columns: [], rows: [], count: 0 };
+                        } else {
+                            this.results = data;
+                            localStorage.setItem('last_sql_' + this.selectedDb, this.sqlQuery);
+                        }
+                    } catch (e) {
+                        this.error = "Query failed: " + e;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                loadLastQuery() {
+                    const saved = localStorage.getItem('last_sql_' + this.selectedDb);
+                    if (saved) this.sqlQuery = saved;
+                },
+                copyToClipboard() {
+                    const text = JSON.stringify(this.results.rows, null, 2);
+                    navigator.clipboard.writeText(text);
+                    alert('Copied to clipboard!');
+                }
+            }
+        });
+    </script>
+</body>
+</html>

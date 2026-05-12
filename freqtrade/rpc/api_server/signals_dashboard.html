@@ -756,7 +756,16 @@
             
             signals.forEach(sig => {
                 const p = parseSignalText(sig.text);
+                const td = sig.trade_data;
                 
+                // Prioritize real trade data over parsed signal text
+                const entry = td ? td.real_entry : p.entry;
+                const tp = td ? (td.real_tp || p.tp) : p.tp;
+                const sl = td ? td.real_sl : p.sl;
+                
+                const isReal = !!td;
+                const realBadge = isReal ? '<span style="font-size: 0.65rem; color: #3b82f6; vertical-align: super; margin-left: 2px;">R</span>' : '';
+
                 // Fallback to database symbol if parsing coin from text failed
                 if (p.coin === "Unknown" || !p.coin) {
                     p.coin = sig.symbol ? sig.symbol.split('/')[0] : "???";
@@ -772,17 +781,23 @@
                     sig.created_at;
                 
                 const typeClass = p.type === 'LONG' ? 'type-long' : 'type-short';
+                
+                // Formatting for real data (with more precision)
+                const fmt = (val) => typeof val === 'number' ? val.toFixed(4) : val;
 
                 tr.innerHTML = `
                     <td class="coin-name">${p.coin}</td>
                     <td class="${typeClass} val-primary">${p.type}</td>
                     <td class="val-muted">${p.lev}</td>
-                    <td class="val-primary">${p.entry}</td>
-                    <td style="color: #0ebd73;">${p.tp}</td>
-                    <td style="color: #f6465d;">${p.sl}</td>
+                    <td class="val-primary">${fmt(entry)}${realBadge}</td>
+                    <td style="color: #0ebd73;">${fmt(tp)}${realBadge}</td>
+                    <td style="color: #f6465d;">${fmt(sl)}${realBadge}</td>
                     <td class="val-muted">${dateStr}</td>
-                    <td>${getStatusHtml(sig.status)}</td>
-                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${p.entry}', '${p.tp}', '${p.sl}', '${sig.occurred_at}', '${sig.status}')">открыть</button></td>
+                    <td>
+                        ${getStatusHtml(sig.status)}
+                        ${td && !td.is_open && td.close_rate ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Exit: ${td.close_rate.toFixed(4)}</div>` : ''}
+                    </td>
+                    <td><button onclick="openChart('${p.coin}', '${p.type}', '${fmt(entry)}', '${fmt(tp)}', '${fmt(sl)}', '${sig.occurred_at}', '${sig.status}')">открыть</button></td>
                 `;
                 tbody.appendChild(tr);
             });

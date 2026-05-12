@@ -3,9 +3,10 @@ from typing import List, Dict, Any
 from pathlib import Path
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
-from freqtrade.rpc.api_server.deps import get_config, get_rpc_optional
+from freqtrade.rpc.api_server.deps import get_config, get_rpc_optional, get_rpc
 from freqtrade.rpc import RPC
 from freqtrade.signals.queue_store import SignalQueueStore
+from freqtrade.persistence import Trade
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,38 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
         finally:
             conn.close()
             
+        # Enrich signals with real trade data
+        enriched_rows = []
+        for row in rows:
+            enriched_row = dict(row)
+            tag = f"telegram_{row['idempotency_key']}"
+            try:
+                # Find trade by tag
+                trade = Trade.session.query(Trade).filter(Trade.enter_tag == tag).first()
+                if trade:
+                    # Find open TP order for this trade
+                    tp_price = None
+                    for order in trade.orders:
+                        if order.ft_order_side == 'sell' and order.status == 'open':
+                            tp_price = order.price
+                            break
+                    
+                    enriched_row['trade_data'] = {
+                        "id": trade.id,
+                        "is_open": trade.is_open,
+                        "real_entry": trade.open_rate,
+                        "real_tp": tp_price or getattr(trade, 'signal_tp', None), # fallback
+                        "real_sl": trade.stop_loss,
+                        "exit_reason": trade.exit_reason,
+                        "close_rate": trade.close_rate if not trade.is_open else None
+                    }
+            except Exception as e_enrich:
+                logger.warning(f"Enrichment failed for {tag}: {e_enrich}")
+            
+            enriched_rows.append(enriched_row)
+            
         return {
-            "signals": rows,
+            "signals": enriched_rows,
             "total_count": total,
             "limit": limit,
             "offset": offset
