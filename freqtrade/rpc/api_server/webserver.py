@@ -269,8 +269,7 @@ class ApiServer(RPCHandler):
         app.include_router(
             api_signals,
             prefix="/api/v1",
-            tags=["Signals"],
-            dependencies=[Depends(http_basic_or_jwt_token)]
+            tags=["Signals"]
         )
         app.include_router(
             api_db,
