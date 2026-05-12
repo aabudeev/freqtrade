@@ -24,6 +24,7 @@
         .result-table { background-color: #1e1e1e !important; }
         .result-table th { color: #2196F3 !important; text-transform: uppercase; font-size: 0.8rem; }
         .error-msg { color: #ff5252; font-family: monospace; white-space: pre-wrap; background: #2a1212; padding: 10px; border-radius: 4px; margin-top: 10px; }
+        .v-data-table td { white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; font-size: 0.85rem; }
     </style>
 </head>
 <body>
@@ -44,7 +45,7 @@
                                 </v-card-title>
 
                                 <v-row class="mt-4">
-                                    <v-col cols="12" md="3">
+                                    <v-col cols="12" md="4">
                                         <v-select
                                             v-model="selectedDb"
                                             :items="dbList"
@@ -55,7 +56,7 @@
                                             @change="onDbChange"
                                         ></v-select>
                                     </v-col>
-                                    <v-col cols="12" md="3">
+                                    <v-col cols="12" md="4">
                                         <v-select
                                             v-model="selectedTable"
                                             :items="tableList"
@@ -66,15 +67,6 @@
                                             :disabled="tableList.length === 0"
                                             @change="onTableChange"
                                         ></v-select>
-                                    </v-col>
-                                    <v-col cols="12" md="2">
-                                        <v-text-field
-                                            v-model="limit"
-                                            label="Rows Limit"
-                                            type="number"
-                                            outlined
-                                            dense
-                                        ></v-text-field>
                                     </v-col>
                                     <v-col cols="12" md="4" class="text-right">
                                         <v-btn color="blue darken-2" @click="executeQuery" :loading="loading" :disabled="!selectedDb">
@@ -101,10 +93,10 @@
                     <v-row v-if="results.columns && results.columns.length > 0">
                         <v-col cols="12">
                             <v-card dark elevation="4">
-                                <v-card-title class="subtitle-1">
+                                <v-card-title class="subtitle-2">
                                     Results: {{ results.count }} rows
                                     <v-spacer></v-spacer>
-                                    <v-btn icon small @click="copyToClipboard"><v-icon>mdi-content-copy</v-icon></v-btn>
+                                    <v-btn icon small @click="copyToClipboard"><v-icon small>mdi-content-copy</v-icon></v-btn>
                                 </v-card-title>
                                 <v-simple-table dense class="result-table">
                                     <template v-slot:default>
@@ -115,7 +107,7 @@
                                         </thead>
                                         <tbody>
                                             <tr v-for="(row, i) in results.rows" :key="i">
-                                                <td v-for="col in results.columns" :key="col">
+                                                <td v-for="col in results.columns" :key="col" :title="row[col]">
                                                     {{ row[col] === null ? 'NULL' : row[col] }}
                                                 </td>
                                             </tr>
@@ -209,8 +201,7 @@
                 tableList: [],
                 selectedDb: '',
                 selectedTable: '',
-                sqlQuery: 'SELECT * FROM trades LIMIT 10',
-                limit: 50,
+                sqlQuery: 'SELECT * FROM trades LIMIT 100',
                 error: null,
                 results: { columns: [], rows: [], count: 0 }
             },
@@ -269,7 +260,12 @@
                 },
                 onTableChange() {
                     if (this.selectedTable) {
-                        this.sqlQuery = `SELECT * FROM ${this.selectedTable} LIMIT ${this.limit}`;
+                        let orderCol = '1'; // Default order by first column
+                        if (this.selectedTable === 'ingest_queue') orderCol = 'occurred_at';
+                        else if (this.selectedTable === 'trades') orderCol = 'id';
+                        else if (this.selectedTable === 'orders') orderCol = 'id';
+                        
+                        this.sqlQuery = `SELECT * FROM ${this.selectedTable} ORDER BY ${orderCol} DESC LIMIT 100`;
                     }
                 },
                 async executeQuery() {
