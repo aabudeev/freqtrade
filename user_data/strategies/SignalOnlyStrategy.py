@@ -125,9 +125,6 @@ class SignalOnlyStrategy(IStrategy):
             if not (self.dp and hasattr(self.dp, '_exchange') and self.dp._exchange and hasattr(self.dp._exchange, '_api')):
                 return
             
-            # Ensure session is clean to prevent PendingRollbackError loop
-            Trade.session.rollback()
-            
             # --- INTERVAL CHECK ---
             # Run reconciliation every 5 minutes to avoid log spam and API rate limits
             now_ts = datetime.now().timestamp()
@@ -163,6 +160,11 @@ class SignalOnlyStrategy(IStrategy):
                 logger.error(f"BINGX RECONCILE: Could not fetch positions: {e_pos}")
 
             for trade in open_trades:
+                # --- SAFETY CHECK ---
+                # Skip trades that are already in the process of exiting to avoid DB conflicts
+                if trade.exit_reason or any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders):
+                    continue
+
                 symbol_api = trade.pair.replace("/", "-").split(":")[0]
                 
                 # --- HEAL ORPHAN TRADES ---
