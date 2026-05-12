@@ -40,7 +40,7 @@ def execute_query(
 ):
     """Execute a raw SQL query and return results"""
     db_path = get_db_path(config, db)
-    
+    conn = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
@@ -85,7 +85,7 @@ def list_tables(
 ):
     """List all tables in the selected database"""
     db_path = get_db_path(config, db)
-    
+    conn = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         cursor = conn.cursor()

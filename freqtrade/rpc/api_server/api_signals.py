@@ -44,31 +44,55 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
             
         # Enrich signals with real trade data
         enriched_rows = []
+        
+        # Get path to trades database from config
+        db_url = config.get('db_url', 'sqlite:///tradesv3.sqlite')
+        trades_db_path = None
+        if db_url.startswith('sqlite:///'):
+            trades_db_path = Path(db_url.replace('sqlite:///', ''))
+            if not trades_db_path.is_absolute():
+                trades_db_path = Path(config.get('user_data_dir', 'user_data')) / trades_db_path
+
         for row in rows:
             enriched_row = dict(row)
             tag = f"telegram_{row['idempotency_key']}"
-            try:
-                # Find trade by tag
-                trade = Trade.session.query(Trade).filter(Trade.enter_tag == tag).first()
-                if trade:
-                    # Find open TP order for this trade
-                    tp_price = None
-                    for order in trade.orders:
-                        if order.ft_order_side == 'sell' and order.status == 'open':
-                            tp_price = order.price
-                            break
-                    
-                    enriched_row['trade_data'] = {
-                        "id": trade.id,
-                        "is_open": trade.is_open,
-                        "real_entry": trade.open_rate,
-                        "real_tp": tp_price or getattr(trade, 'signal_tp', None), # fallback
-                        "real_sl": trade.stop_loss,
-                        "exit_reason": trade.exit_reason,
-                        "close_rate": trade.close_rate if not trade.is_open else None
-                    }
-            except Exception as e_enrich:
-                logger.warning(f"Enrichment failed for {tag}: {e_enrich}")
+            
+            if trades_db_path and trades_db_path.exists():
+                try:
+                    # Query trades database directly via sqlite3 for stability
+                    import sqlite3
+                    t_conn = sqlite3.connect(f"file:{trades_db_path}?mode=ro", uri=True)
+                    try:
+                        t_conn.row_factory = sqlite3.Row
+                        t_cursor = t_conn.cursor()
+                        # Find trade by enter_tag
+                        t_cursor.execute("SELECT * FROM trades WHERE enter_tag = ? LIMIT 1", (tag,))
+                        t_row = t_cursor.fetchone()
+                        
+                        if t_row:
+                            # Try to find open TP order
+                            tp_price = None
+                            t_cursor.execute(
+                                "SELECT price FROM orders WHERE ft_trade_id = ? AND ft_order_side = 'sell' AND status = 'open' LIMIT 1",
+                                (t_row['id'],)
+                            )
+                            o_row = t_cursor.fetchone()
+                            if o_row:
+                                tp_price = o_row['price']
+                            
+                            enriched_row['trade_data'] = {
+                                "id": t_row['id'],
+                                "is_open": bool(t_row['is_open']),
+                                "real_entry": t_row['open_rate'],
+                                "real_tp": tp_price or t_row.get('signal_tp'), 
+                                "real_sl": t_row['stop_loss'],
+                                "exit_reason": t_row['exit_reason'],
+                                "close_rate": t_row['close_rate'] if not t_row['is_open'] else None
+                            }
+                    finally:
+                        t_conn.close()
+                except Exception as e_enrich:
+                    logger.debug(f"Enrichment failed for {tag}: {e_enrich}")
             
             enriched_rows.append(enriched_row)
             
