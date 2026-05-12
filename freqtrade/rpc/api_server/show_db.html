@@ -119,6 +119,7 @@
     <script>
         let ftToken = '';
         let ftRefreshToken = '';
+        let _refreshTimer = null;
 
         async function silentLogin() {
             let username = '', password = '';
@@ -141,7 +142,10 @@
                 }
             } catch (e) {}
 
-            if (!username || !password) return false;
+            if (!username || !password) {
+                console.warn('DB Viewer: No credentials found in localStorage');
+                return false;
+            }
 
             try {
                 const res = await fetch('/api/v1/token/login', {
@@ -152,39 +156,20 @@
                     const data = await res.json();
                     ftToken = data.access_token;
                     ftRefreshToken = data.refresh_token || '';
+                    console.log('DB Viewer: Silent login OK');
                     return true;
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error('DB Viewer: Silent login failed', e);
+            }
             return false;
         }
 
         async function apiFetch(url, options = {}) {
-            // Brute-force find token in localStorage if not set
-            if (!ftToken) {
-                // 1. Try Pinia/Vuex stores
-                for (let i = 0; i < localStorage.length; i++) {
-                    const val = localStorage.getItem(localStorage.key(i));
-                    if (!val) continue;
-                    try {
-                        const p = JSON.parse(val);
-                        if (p && p.accessToken) { ftToken = p.accessToken; ftRefreshToken = p.refreshToken; break; }
-                        if (p && p.auth && p.auth.token) { ftToken = p.auth.token; break; }
-                    } catch (e) {}
-                }
-                // 2. Try raw JWT strings
-                if (!ftToken) {
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const v = localStorage.getItem(localStorage.key(i));
-                        if (v && typeof v === 'string' && v.startsWith('eyJ')) { ftToken = v; break; }
-                    }
-                }
-            }
-
-            if (!ftToken) await silentLogin();
-
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
             if (res.status === 401) {
+                console.warn('DB Viewer: 401. Attempting silent login recovery...');
                 const loginOk = await silentLogin();
                 if (loginOk) {
                     options.headers['Authorization'] = `Bearer ${ftToken}`;
@@ -194,7 +179,7 @@
             return res;
         }
 
-        new Vue({
+        const vm = new Vue({
             el: '#app',
             vuetify: new Vuetify(),
             data: {
@@ -205,10 +190,6 @@
                 limit: 50,
                 error: null,
                 results: { columns: [], rows: [], count: 0 }
-            },
-            async mounted() {
-                await this.fetchDbList();
-                this.loadLastQuery();
             },
             methods: {
                 async fetchDbList() {
@@ -224,6 +205,7 @@
                             this.dbList = data;
                             if (this.dbList.length > 0 && !this.selectedDb) {
                                 this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
+                                this.loadLastQuery();
                             }
                         } else {
                             this.error = "Invalid API response format: expected array.";
@@ -269,6 +251,52 @@
                     navigator.clipboard.writeText(text);
                     alert('Copied to clipboard!');
                 }
+            }
+        });
+
+        // Robust token discovery like in signals_dashboard.html
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 1. Try Pinia/Vuex stores
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const val = localStorage.getItem(key);
+                if (!val) continue;
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && parsed.accessToken) {
+                        ftToken = parsed.accessToken;
+                        ftRefreshToken = parsed.refreshToken || '';
+                        break;
+                    }
+                    if (parsed && parsed.auth) {
+                        ftToken = parsed.auth.token || parsed.auth.access_token || '';
+                        ftRefreshToken = parsed.auth.refresh_token || '';
+                        if (ftToken) break;
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Brute-force find any JWT
+            if (!ftToken) {
+                for (let i = 0; i < localStorage.length; i++) {
+                    const val = localStorage.getItem(localStorage.key(i));
+                    if (val && typeof val === 'string' && val.startsWith('eyJ')) {
+                        ftToken = val;
+                        break;
+                    }
+                }
+            }
+
+            // 3. Last resort: silent login
+            if (!ftToken) {
+                await silentLogin();
+            }
+
+            if (ftToken) {
+                console.log('DB Viewer: Auth successful');
+                vm.fetchDbList();
+            } else {
+                vm.error = 'Не удалось авторизоваться. Пожалуйста, залогиньтесь в основной FreqUI.';
             }
         });
     </script>
