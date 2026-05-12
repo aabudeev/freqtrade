@@ -37,9 +37,13 @@
                                 <v-card-title class="headline blue--text text--lighten-2">
                                     <v-icon left color="blue">mdi-database</v-icon>
                                     Database Viewer
+                                    <v-spacer></v-spacer>
+                                    <v-btn small text color="grey" @click="showLogin = true">
+                                        <v-icon left small>mdi-lock-reset</v-icon> Сменить пароль
+                                    </v-btn>
                                 </v-card-title>
 
-                                <v-row class="mt-4" v-if="ftToken">
+                                <v-row class="mt-4">
                                     <v-col cols="12" md="3">
                                         <v-select
                                             v-model="selectedDb"
@@ -79,15 +83,7 @@
                                     </v-col>
                                 </v-row>
 
-                                <div v-if="!ftToken" class="text-center pa-4">
-                                    <v-alert type="warning" border="left" dense outlined>
-                                        Авторизация не найдена в localStorage.
-                                    </v-alert>
-                                    <v-btn color="blue" @click="showLogin = true">Ввести пароль вручную</v-btn>
-                                </div>
-
                                 <textarea 
-                                    v-if="ftToken"
                                     v-model="sqlQuery" 
                                     class="sql-editor mt-2" 
                                     placeholder="SELECT * FROM trades LIMIT 10..."
@@ -131,16 +127,17 @@
                     </v-row>
                 </v-container>
 
-                <v-dialog v-model="showLogin" max-width="400">
+                <v-dialog v-model="showLogin" max-width="400" persistent>
                     <v-card dark>
-                        <v-card-title>Manual Login</v-card-title>
+                        <v-card-title>Авторизация</v-card-title>
                         <v-card-text>
-                            <v-text-field v-model="manualUser" label="Username" outlined dense></v-text-field>
-                            <v-text-field v-model="manualPass" label="Password" type="password" outlined dense></v-text-field>
+                            Для доступа к БД введите логин и пароль от FreqUI.
+                            <v-text-field v-model="manualUser" label="Логин" outlined dense class="mt-4"></v-text-field>
+                            <v-text-field v-model="manualPass" label="Пароль" type="password" outlined dense></v-text-field>
                         </v-card-text>
                         <v-card-actions>
                             <v-spacer></v-spacer>
-                            <v-btn color="blue" @click="doManualLogin">Login</v-btn>
+                            <v-btn color="blue" @click="doManualLogin">Войти</v-btn>
                         </v-card-actions>
                     </v-card>
                 </v-dialog>
@@ -152,33 +149,23 @@
     <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
     <script>
         let ftToken = '';
-        let ftRefreshToken = '';
 
         async function silentLogin(u, p) {
-            let username = u, password = p;
-            if (!username || !password) {
+            let username = u || 'freqtrade', password = p;
+            if (!password) {
                 try {
                     for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        const val = localStorage.getItem(key);
+                        const val = localStorage.getItem(localStorage.key(i));
                         if (!val) continue;
                         try {
                             const parsed = JSON.parse(val);
-                            if (parsed && parsed.openAPIPassword) {
-                                password = parsed.openAPIPassword;
-                                username = parsed.username || 'freqtrade';
-                            }
-                            if (parsed && parsed.auth && parsed.auth.password) {
-                                password = parsed.auth.password;
-                                username = parsed.auth.username || 'freqtrade';
-                            }
+                            if (parsed && parsed.openAPIPassword) { password = parsed.openAPIPassword; username = parsed.username || 'freqtrade'; break; }
+                            if (parsed && parsed.auth && parsed.auth.password) { password = parsed.auth.password; username = parsed.auth.username || 'freqtrade'; break; }
                         } catch (e) {}
                     }
                 } catch (e) {}
             }
-
-            if (!username || !password) return false;
-
+            if (!password) return false;
             try {
                 const res = await fetch('/api/v1/token/login', {
                     method: 'POST',
@@ -187,7 +174,6 @@
                 if (res.ok) {
                     const data = await res.json();
                     ftToken = data.access_token;
-                    ftRefreshToken = data.refresh_token || '';
                     localStorage.setItem('ft_manual_token', ftToken);
                     return true;
                 }
@@ -204,6 +190,8 @@
                 if (loginOk) {
                     options.headers['Authorization'] = `Bearer ${ftToken}`;
                     res = await fetch(url, options);
+                } else {
+                    window.dispatchEvent(new CustomEvent('ft-unauthorized'));
                 }
             }
             return res;
@@ -213,7 +201,6 @@
             el: '#app',
             vuetify: new Vuetify(),
             data: {
-                ftToken: '',
                 showLogin: false,
                 manualUser: 'freqtrade',
                 manualPass: '',
@@ -227,32 +214,39 @@
                 error: null,
                 results: { columns: [], rows: [], count: 0 }
             },
+            mounted() {
+                window.addEventListener('ft-unauthorized', () => { this.showLogin = true; });
+                this.init();
+            },
             methods: {
+                async init() {
+                    ftToken = localStorage.getItem('ft_manual_token') || '';
+                    if (!ftToken) await silentLogin();
+                    await this.fetchDbList();
+                },
                 async doManualLogin() {
                     const ok = await silentLogin(this.manualUser, this.manualPass);
                     if (ok) {
-                        this.ftToken = ftToken;
                         this.showLogin = false;
-                        this.fetchDbList();
+                        this.error = null;
+                        await this.fetchDbList();
                     } else {
-                        alert('Login failed');
+                        alert('Ошибка входа. Проверьте логин и пароль.');
                     }
                 },
                 async fetchDbList() {
                     try {
                         const response = await apiFetch('/api/v1/db_list');
                         if (!response.ok) {
+                            if (response.status === 401) return;
                             const errData = await response.json().catch(() => ({}));
                             this.error = "API Error: " + (errData.detail || response.statusText);
                             return;
                         }
-                        const data = await response.json();
-                        if (Array.isArray(data)) {
-                            this.dbList = data;
-                            if (this.dbList.length > 0 && !this.selectedDb) {
-                                this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
-                                await this.onDbChange();
-                            }
+                        this.dbList = await response.json();
+                        if (this.dbList.length > 0 && !this.selectedDb) {
+                            this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
+                            await this.onDbChange();
                         }
                     } catch (e) {
                         this.error = "Failed to fetch DB list: " + e;
@@ -271,9 +265,7 @@
                             this.tableList = await response.json();
                             this.loadLastQuery();
                         }
-                    } catch (e) {
-                        console.error('Failed to fetch tables', e);
-                    }
+                    } catch (e) {}
                 },
                 onTableChange() {
                     if (this.selectedTable) {
@@ -284,15 +276,10 @@
                     this.loading = true;
                     this.error = null;
                     try {
-                        let query = this.sqlQuery;
-                        if (!query.toUpperCase().includes('LIMIT') && query.toUpperCase().includes('SELECT')) {
-                            query += ' LIMIT ' + this.limit;
-                        }
-
                         const response = await apiFetch('/api/v1/db_query', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ db: this.selectedDb, sql: query })
+                            body: JSON.stringify({ db: this.selectedDb, sql: this.sqlQuery })
                         });
                         const data = await response.json();
                         if (data.error) {
@@ -320,44 +307,8 @@
                 copyToClipboard() {
                     const text = JSON.stringify(this.results.rows, null, 2);
                     navigator.clipboard.writeText(text);
-                    alert('Copied to clipboard!');
+                    alert('Copied!');
                 }
-            }
-        });
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                const authStr = localStorage.getItem('auth');
-                if (authStr) {
-                    const auth = JSON.parse(authStr);
-                    if (auth && auth.token) ftToken = auth.token;
-                }
-            } catch (e) {}
-
-            if (!ftToken) {
-                for (let i = 0; i < localStorage.length; i++) {
-                    const val = localStorage.getItem(localStorage.key(i));
-                    if (!val) continue;
-                    try {
-                        const parsed = JSON.parse(val);
-                        if (parsed && parsed.accessToken) { ftToken = parsed.accessToken; break; }
-                        if (parsed && parsed.auth && parsed.auth.token) { ftToken = parsed.auth.token; break; }
-                    } catch (e) {}
-                }
-            }
-
-            if (!ftToken) {
-                for (let i = 0; i < localStorage.length; i++) {
-                    const val = localStorage.getItem(localStorage.key(i));
-                    if (val && typeof val === 'string' && val.startsWith('eyJ')) { ftToken = val; break; }
-                }
-            }
-
-            if (!ftToken) await silentLogin();
-
-            if (ftToken) {
-                vm.ftToken = ftToken;
-                vm.fetchDbList();
             }
         });
     </script>
