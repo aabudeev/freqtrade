@@ -77,3 +77,27 @@ def execute_query(
     finally:
         if conn:
             conn.close()
+
+@router.post("/db_tables", tags=["Database"])
+def list_tables(
+    config=Depends(get_config),
+    db: str = Body(..., embed=True)
+):
+    """List all tables in the selected database"""
+    db_path = get_db_path(config, db)
+    
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        
+        # Query for all table names in sqlite_master
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+        tables = [row[0] for row in cursor.fetchall()]
+        
+        return sorted(tables)
+            
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()

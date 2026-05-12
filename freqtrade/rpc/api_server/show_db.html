@@ -40,7 +40,7 @@
                                 </v-card-title>
 
                                 <v-row class="mt-4" v-if="ftToken">
-                                    <v-col cols="12" md="4">
+                                    <v-col cols="12" md="3">
                                         <v-select
                                             v-model="selectedDb"
                                             :items="dbList"
@@ -48,7 +48,19 @@
                                             outlined
                                             dense
                                             prepend-inner-icon="mdi-database-outline"
-                                            @change="loadLastQuery"
+                                            @change="onDbChange"
+                                        ></v-select>
+                                    </v-col>
+                                    <v-col cols="12" md="3">
+                                        <v-select
+                                            v-model="selectedTable"
+                                            :items="tableList"
+                                            label="Select Table"
+                                            outlined
+                                            dense
+                                            prepend-inner-icon="mdi-table"
+                                            :disabled="tableList.length === 0"
+                                            @change="onTableChange"
                                         ></v-select>
                                     </v-col>
                                     <v-col cols="12" md="2">
@@ -60,7 +72,7 @@
                                             dense
                                         ></v-text-field>
                                     </v-col>
-                                    <v-col cols="12" md="6" class="text-right">
+                                    <v-col cols="12" md="4" class="text-right">
                                         <v-btn color="blue darken-2" @click="executeQuery" :loading="loading" :disabled="!selectedDb">
                                             <v-icon left>mdi-play</v-icon> Execute SQL
                                         </v-btn>
@@ -145,7 +157,6 @@
         async function silentLogin(u, p) {
             let username = u, password = p;
             if (!username || !password) {
-                console.log('Searching creds in localStorage keys:', Object.keys(localStorage));
                 try {
                     for (let i = 0; i < localStorage.length; i++) {
                         const key = localStorage.key(i);
@@ -177,7 +188,7 @@
                     const data = await res.json();
                     ftToken = data.access_token;
                     ftRefreshToken = data.refresh_token || '';
-                    localStorage.setItem('ft_manual_token', ftToken); // Save for later
+                    localStorage.setItem('ft_manual_token', ftToken);
                     return true;
                 }
             } catch (e) {}
@@ -186,7 +197,6 @@
 
         async function apiFetch(url, options = {}) {
             if (!ftToken) ftToken = localStorage.getItem('ft_manual_token') || '';
-            
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
             if (res.status === 401) {
@@ -209,7 +219,9 @@
                 manualPass: '',
                 loading: false,
                 dbList: [],
+                tableList: [],
                 selectedDb: '',
+                selectedTable: '',
                 sqlQuery: 'SELECT * FROM trades LIMIT 10',
                 limit: 50,
                 error: null,
@@ -239,11 +251,33 @@
                             this.dbList = data;
                             if (this.dbList.length > 0 && !this.selectedDb) {
                                 this.selectedDb = this.dbList.find(d => d.includes('trades')) || this.dbList[0];
-                                this.loadLastQuery();
+                                await this.onDbChange();
                             }
                         }
                     } catch (e) {
                         this.error = "Failed to fetch DB list: " + e;
+                    }
+                },
+                async onDbChange() {
+                    this.tableList = [];
+                    this.selectedTable = '';
+                    try {
+                        const response = await apiFetch('/api/v1/db_tables', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ db: this.selectedDb })
+                        });
+                        if (response.ok) {
+                            this.tableList = await response.json();
+                            this.loadLastQuery();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch tables', e);
+                    }
+                },
+                onTableChange() {
+                    if (this.selectedTable) {
+                        this.sqlQuery = `SELECT * FROM ${this.selectedTable} LIMIT ${this.limit}`;
                     }
                 },
                 async executeQuery() {
@@ -276,7 +310,12 @@
                 },
                 loadLastQuery() {
                     const saved = localStorage.getItem('last_sql_' + this.selectedDb);
-                    if (saved) this.sqlQuery = saved;
+                    if (saved) {
+                        this.sqlQuery = saved;
+                    } else if (this.tableList.length > 0) {
+                        this.selectedTable = this.tableList.find(t => t === 'trades' || t === 'ingest_queue') || this.tableList[0];
+                        this.onTableChange();
+                    }
                 },
                 copyToClipboard() {
                     const text = JSON.stringify(this.results.rows, null, 2);
@@ -287,7 +326,6 @@
         });
 
         document.addEventListener('DOMContentLoaded', async () => {
-            // Check direct 'auth' key first
             try {
                 const authStr = localStorage.getItem('auth');
                 if (authStr) {
