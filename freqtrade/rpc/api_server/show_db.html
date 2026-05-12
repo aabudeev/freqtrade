@@ -117,7 +117,6 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
     <script>
-        // Shared logic from signals dashboard to handle authentication properly
         let ftToken = '';
         let ftRefreshToken = '';
 
@@ -133,6 +132,10 @@
                         if (parsed && parsed.openAPIPassword) {
                             password = parsed.openAPIPassword;
                             username = parsed.username || 'freqtrade';
+                        }
+                        if (parsed && parsed.auth && parsed.auth.password) {
+                            password = parsed.auth.password;
+                            username = parsed.auth.username || 'freqtrade';
                         }
                     } catch (e) {}
                 }
@@ -156,7 +159,29 @@
         }
 
         async function apiFetch(url, options = {}) {
+            // Brute-force find token in localStorage if not set
+            if (!ftToken) {
+                // 1. Try Pinia/Vuex stores
+                for (let i = 0; i < localStorage.length; i++) {
+                    const val = localStorage.getItem(localStorage.key(i));
+                    if (!val) continue;
+                    try {
+                        const p = JSON.parse(val);
+                        if (p && p.accessToken) { ftToken = p.accessToken; ftRefreshToken = p.refreshToken; break; }
+                        if (p && p.auth && p.auth.token) { ftToken = p.auth.token; break; }
+                    } catch (e) {}
+                }
+                // 2. Try raw JWT strings
+                if (!ftToken) {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const v = localStorage.getItem(localStorage.key(i));
+                        if (v && typeof v === 'string' && v.startsWith('eyJ')) { ftToken = v; break; }
+                    }
+                }
+            }
+
             if (!ftToken) await silentLogin();
+
             options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${ftToken}` };
             let res = await fetch(url, options);
             if (res.status === 401) {
@@ -182,21 +207,6 @@
                 results: { columns: [], rows: [], count: 0 }
             },
             async mounted() {
-                // Initial token fetch from localStorage (emulate FreqUI behavior)
-                try {
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        const val = localStorage.getItem(key);
-                        if (val && typeof val === 'string' && val.includes('"accessToken"')) {
-                            const parsed = JSON.parse(val);
-                            if (parsed.accessToken) {
-                                ftToken = parsed.accessToken;
-                                ftRefreshToken = parsed.refreshToken;
-                            }
-                        }
-                    }
-                } catch (e) {}
-
                 await this.fetchDbList();
                 this.loadLastQuery();
             },
@@ -205,7 +215,7 @@
                     try {
                         const response = await apiFetch('/api/v1/db_list');
                         if (!response.ok) {
-                            const errData = await response.json();
+                            const errData = await response.json().catch(() => ({}));
                             this.error = "API Error: " + (errData.detail || response.statusText);
                             return;
                         }
