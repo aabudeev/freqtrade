@@ -830,7 +830,12 @@ class SignalWorker:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             # Sync anything that is not in a final success/expired state
-            cursor.execute("SELECT * FROM ingest_queue WHERE status NOT IN ('closed(TP)', 'closed(SL)', 'closed(ext)', 'expired', 'skipped')")
+            # We use NOT LIKE 'closed%' to exclude all various closed(reason) statuses
+            cursor.execute(
+                "SELECT * FROM ingest_queue "
+                "WHERE status NOT LIKE 'closed%' "
+                "AND status NOT IN ('expired', 'skipped', 'failed_liquidation')"
+            )
             open_signals_raw = cursor.fetchall()
             open_signals = [dict(r) for r in open_signals_raw]
             conn.close()
@@ -852,7 +857,8 @@ class SignalWorker:
                         if sig['status'] != 'active':
                             new_status = "active"
                     else:
-                        reason = trade.exit_reason or "exit"
+                        # Ensure reason is a clean string
+                        reason = str(trade.exit_reason) if trade.exit_reason else "exit"
                         new_status = f"closed({reason})"
                 else:
                     # No trade found. 
