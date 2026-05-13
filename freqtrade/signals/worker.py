@@ -824,25 +824,16 @@ class SignalWorker:
         Periodically sync signal statuses with trade outcomes.
         """
         from freqtrade.persistence import Trade
+        from freqtrade.persistence import Trade
         import sqlite3
         try:
+            Trade.session.remove() # Ensure fresh session for each sync
+            
             conn = self.store._connect()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            # Sync anything that is not in a final success/expired state
-            # We use NOT LIKE 'closed%' to exclude all various closed(reason) statuses
-            cursor.execute(
-                "SELECT * FROM ingest_queue "
-                "WHERE status NOT LIKE 'closed%' "
-                "AND status NOT IN ('expired', 'skipped', 'failed_liquidation')"
-            )
-            open_signals_raw = cursor.fetchall()
-            open_signals = [dict(r) for r in open_signals_raw]
-            conn.close()
-
-            from freqtrade.persistence import Trade
-            Trade.session.remove() # Ensure fresh session for each sync
             
+            # Sync anything that is not in a final success/expired state
             cursor.execute(
                 "SELECT * FROM ingest_queue "
                 "WHERE status NOT LIKE 'closed%' "
