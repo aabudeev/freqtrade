@@ -230,48 +230,8 @@ class SignalOnlyStrategy(IStrategy):
                     all_exchange_orders = open_orders + pending_orders
 
                     
-                    # --- PASSIVE MONITORING ---
-                    bot = kwargs.get('bot')
-                    if not bot:
-                        continue
-                        
-                    # Fetch current state from exchange
-                    positions = [p for p in bot.exchange.fetch_positions() if p['symbol'] == trade.pair]
-
-                    
-                    # Check if position exists
-                    has_position = len(positions) > 0
-                    has_any_order = len(all_exchange_orders) > 0
-                    
-                    if not has_position and not has_any_order:
-                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position/orders on exchange. FORCE CLOSING in DB.")
-                        # Mark trade as closed in DB with current rate
-                        try:
-                            # Use a small timeout to avoid blocking
-                            current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
-                            trade.close_date = datetime.now(timezone.utc)
-                            trade.is_open = False
-                            trade.exit_reason = "reconciled_missing"
-                            trade.close_rate = current_rate
-                            # Calculate profit based on current rate
-                            trade.close_profit = trade.calc_profit_amount(current_rate)
-                            trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
-                            
-                            from freqtrade.persistence import Trade
-                            Trade.commit()
-                            logger.info(f"BINGX RECONCILE: Trade {trade.id} successfully force-closed in database.")
-                        except Exception as e_close:
-                            logger.error(f"BINGX RECONCILE: Failed to force-close trade {trade.id}: {e_close}")
-
-                        continue  # Skip TP/SL placement for ghost trades
-                    elif not has_position and has_any_order:
-                        logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no position but has orders. Keeping open.")
-
-                except Exception as e_fetch:
-                    logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
-                    continue
-
                 # --- RECONCILE TAKE PROFIT (TP) ---
+
                 has_tp = any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders)
                 if not has_tp:
                     try:
