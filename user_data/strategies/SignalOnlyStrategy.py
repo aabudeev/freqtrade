@@ -200,7 +200,10 @@ class SignalOnlyStrategy(IStrategy):
                     all_exchange_orders = open_orders + pending_orders
                     
                     # --- PASSIVE MONITORING ---
+                    # Check if position exists
+                    has_position = len(positions) > 0
                     has_any_order = len(all_exchange_orders) > 0
+                    
                     if not has_position and not has_any_order:
                         logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position/orders on exchange. FORCE CLOSING in DB.")
                         # Mark trade as closed in DB with current rate
