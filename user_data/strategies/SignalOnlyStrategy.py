@@ -191,8 +191,8 @@ class SignalOnlyStrategy(IStrategy):
                     trade.is_open = False
                     trade.exit_reason = "reconciled_missing_position"
                     trade.close_rate = current_rate
-                    trade.close_profit = trade.calc_profit_amount(current_rate)
-                    trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
+                    trade.close_profit = trade.calc_profit_ratio(current_rate)
+                    trade.close_profit_abs = trade.calc_profit(current_rate)
                     
                     # Force commit to DB
                     from freqtrade.persistence import Trade
