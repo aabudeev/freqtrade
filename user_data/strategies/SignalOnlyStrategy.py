@@ -160,55 +160,42 @@ class SignalOnlyStrategy(IStrategy):
                 logger.error(f"BINGX RECONCILE: Could not fetch positions: {e_pos}")
 
             for trade in open_trades:
+                # --- AGGRESSIVE BINGX RECONCILE ---
+                bot = kwargs.get('bot')
+                if bot:
+                    # 1. Check position directly via bot.exchange
+                    try:
+                        positions = bot.exchange.fetch_positions()
+                        has_position = any(p['symbol'] == trade.pair and float(p.get('contracts', p.get('size', 0))) > 0 for p in positions)
+                        
+                        if not has_position:
+                            logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange. FORCE CLOSING.")
+                            
+                            # Update trade object
+                            current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
+                            trade.close_date = datetime.now(timezone.utc)
+                            trade.is_open = False
+                            trade.exit_reason = "reconciled_missing_position"
+                            trade.close_rate = current_rate
+                            trade.close_profit = trade.calc_profit_amount(current_rate)
+                            trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
+                            
+                            # Force commit to DB
+                            from freqtrade.persistence import Trade
+                            Trade.session.add(trade)
+                            Trade.session.commit()
+                            logger.info(f"BINGX RECONCILE: Trade {trade.id} closed successfully.")
+                            continue
+                            
+                    except Exception as e_pos:
+                        logger.error(f"BINGX RECONCILE: Error checking position: {e_pos}")
+
                 # --- SAFETY CHECK ---
                 # Skip trades that are already in the process of exiting to avoid DB conflicts
                 if trade.exit_reason or any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders):
                     continue
 
                 symbol_api = trade.pair.replace("/", "-").split(":")[0]
-                
-                # --- HEAL ORPHAN TRADES ---
-                # Check if this trade has an active position on exchange
-                is_orphan = True
-                for p in all_positions:
-                    p_symbol = p.get('symbol', '').replace(":", "-")
-                    p_contracts = float(p.get('contracts', 0) or p.get('size', 0) or 0)
-                    if symbol_api in p_symbol and p_contracts != 0:
-                        is_orphan = False
-                        break
-
-                # --- AGGRESSIVE BINGX RECONCILE ---
-                bot = kwargs.get('bot')
-                if not bot:
-                    continue
-
-                # 1. Check position directly via bot.exchange
-                try:
-                    positions = bot.exchange.fetch_positions()
-                    has_position = any(p['symbol'] == trade.pair and float(p.get('contracts', p.get('size', 0))) > 0 for p in positions)
-                    
-                    if not has_position:
-                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange. FORCE CLOSING.")
-                        
-                        # Update trade object
-                        current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
-                        trade.close_date = datetime.now(timezone.utc)
-                        trade.is_open = False
-                        trade.exit_reason = "reconciled_missing_position"
-                        trade.close_rate = current_rate
-                        trade.close_profit = trade.calc_profit_amount(current_rate)
-                        trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
-                        
-                        # Force commit to DB
-                        from freqtrade.persistence import Trade
-                        Trade.session.add(trade)
-                        Trade.session.commit()
-                        logger.info(f"BINGX RECONCILE: Trade {trade.id} closed successfully.")
-                        continue
-                        
-                except Exception as e_pos:
-                    logger.error(f"BINGX RECONCILE: Error checking position: {e_pos}")
-                    continue
 
                 # Fetch orders using CCXT unified and raw methods
                 try:
@@ -231,6 +218,7 @@ class SignalOnlyStrategy(IStrategy):
                         logger.debug(f"BINGX RECONCILE: Pending fallback error: {e_pend}")
                     
                     all_exchange_orders = open_orders + pending_orders
+
                     
                     # --- PASSIVE MONITORING ---
                     bot = kwargs.get('bot')
