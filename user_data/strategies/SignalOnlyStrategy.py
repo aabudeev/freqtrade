@@ -165,25 +165,37 @@ class SignalOnlyStrategy(IStrategy):
                 all_positions = api.fetch_positions()
             except Exception as e_pos:
                 logger.error(f"BINGX RECONCILE: Could not fetch positions: {e_pos}")
-                # Don't return, try to continue with empty positions (safer than nothing)
+                return  # SAFETY: If we can't fetch positions, do NOT assume all trades are ghosts
+
+            # SAFETY: If exchange returned zero positions but we have open trades,
+            # this is likely an API issue. Do NOT wipe all trades.
+            if not all_positions and open_trades:
+                logger.warning(f"BINGX RECONCILE: fetch_positions returned EMPTY but we have {len(open_trades)} open trades. Skipping reconciliation (API issue?).")
+                return
+
+            # Log what we got for debugging
+            pos_symbols = [p.get('symbol', '?') for p in all_positions if float(p.get('contracts', 0) or p.get('size', 0) or 0) != 0]
+            logger.info(f"BINGX RECONCILE: Active positions on exchange: {pos_symbols}")
 
             for trade in open_trades:
+                # --- SAFETY: Skip trades younger than 10 minutes ---
+                trade_age_seconds = (datetime.now(timezone.utc) - trade.open_date_utc).total_seconds() if trade.open_date_utc else 0
+                if trade_age_seconds < 600:
+                    logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) is only {trade_age_seconds:.0f}s old, skipping reconciliation.")
+                    continue
+
                 # --- AGGRESSIVE BINGX RECONCILE ---
-                # Check if this trade has an active position in the list we just fetched
-                symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                # Match using CCXT unified symbol format (e.g. "DOGE/USDT:USDT")
                 has_position = False
-                
                 for p in all_positions:
-                    p_symbol = p.get('symbol', '').replace(":", "-")
-                    # Match symbol (e.g. ATOM-USDT in ATOM-USDT-SWAP or similar)
-                    if symbol_api in p_symbol:
+                    if p.get('symbol') == trade.pair:
                         p_contracts = float(p.get('contracts', 0) or p.get('size', 0) or 0)
                         if p_contracts != 0:
                             has_position = True
                             break
                 
                 if not has_position:
-                    logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange. FORCE CLOSING.")
+                    logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange (age: {trade_age_seconds:.0f}s). FORCE CLOSING.")
                     
                     # Update trade object
                     current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
@@ -207,6 +219,7 @@ class SignalOnlyStrategy(IStrategy):
                     continue
 
                 # Fetch orders using CCXT unified and raw methods
+                symbol_api = trade.pair.replace("/", "-").split(":")[0]
                 try:
                     # 1. Fetch regular open orders (Limits)
 
