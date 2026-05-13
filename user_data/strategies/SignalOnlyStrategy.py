@@ -316,27 +316,23 @@ class SignalOnlyStrategy(IStrategy):
                                 price_match = sl_price and abs(o_stop_price - float(sl_price)) / float(sl_price) < 0.005
                                 amount_match = abs(o_amount - trade.amount) / trade.amount < 0.001 if trade.amount > 0 else False
 
-                                if price_match and amount_match:
+                                if price_match:
+                                    # If price matches but amount doesn't, we still recognize it but log a warning
+                                    # This handles cases where user has other positions on the same pair (e.g. VST/Demo)
                                     sl_order_id = str(o.get('id') or o.get('orderId'))
-                                    logger.info(f"BINGX RECONCILE: Recognized existing SL {sl_order_id} for {trade.pair} (Type: {o_type}, Amount: {o_amount})")
+                                    if not amount_match:
+                                        logger.warning(f"BINGX RECONCILE: Recognized SL {sl_order_id} for {trade.pair} but AMOUNT MISMATCH: {o_amount} vs {trade.amount}. Proceeding anyway.")
+                                    else:
+                                        logger.info(f"BINGX RECONCILE: Recognized existing SL {sl_order_id} for {trade.pair}")
                                     break
-                                elif price_match and not amount_match:
-                                    logger.warning(f"BINGX RECONCILE: Found SL for {trade.pair} with WRONG AMOUNT: {o_amount} vs expected {trade.amount}.")
-                                    pass
                         
                         if sl_order_id:
                             self._register_order(trade, sl_order_id, 'stoploss', float(sl_price))
                             has_sl = True
                         
                         if not has_sl and sl_price:
-                            # CRITICAL: If we see ANY non-limit order, maybe it's our SL but we didn't match it perfectly?
-                            # We count them and if any exist, we SKIP placing a new one to be safe.
-                            non_limit_orders = [o for o in all_exchange_orders if str(o.get('type', o.get('orderType', ''))).upper() not in ['LIMIT', '']]
-                            
-                            if non_limit_orders:
-                                logger.debug(f"BINGX RECONCILE: Found {len(non_limit_orders)} potential SL/Trigger orders for {trade.pair}. Skipping to avoid duplicates.")
-                                has_sl = True
-                            
+                            # Only skip if we found a match above. 
+                            # Previous 'non_limit_orders' check was too broad.
                             if not has_sl:
                                 sl_price_rounded = round(float(sl_price), 8)
                                 logger.info(f"BINGX RECONCILE: Placing missing SL for {trade.pair} at {sl_price_rounded}")
