@@ -177,6 +177,39 @@ class SignalOnlyStrategy(IStrategy):
                         is_orphan = False
                         break
 
+                # --- AGGRESSIVE BINGX RECONCILE ---
+                bot = kwargs.get('bot')
+                if not bot:
+                    continue
+
+                # 1. Check position directly via bot.exchange
+                try:
+                    positions = bot.exchange.fetch_positions()
+                    has_position = any(p['symbol'] == trade.pair and float(p.get('contracts', p.get('size', 0))) > 0 for p in positions)
+                    
+                    if not has_position:
+                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange. FORCE CLOSING.")
+                        
+                        # Update trade object
+                        current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
+                        trade.close_date = datetime.now(timezone.utc)
+                        trade.is_open = False
+                        trade.exit_reason = "reconciled_missing_position"
+                        trade.close_rate = current_rate
+                        trade.close_profit = trade.calc_profit_amount(current_rate)
+                        trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
+                        
+                        # Force commit to DB
+                        from freqtrade.persistence import Trade
+                        Trade.session.add(trade)
+                        Trade.session.commit()
+                        logger.info(f"BINGX RECONCILE: Trade {trade.id} closed successfully.")
+                        continue
+                        
+                except Exception as e_pos:
+                    logger.error(f"BINGX RECONCILE: Error checking position: {e_pos}")
+                    continue
+
                 # Fetch orders using CCXT unified and raw methods
                 try:
                     # 1. Fetch regular open orders (Limits)
