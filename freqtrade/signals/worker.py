@@ -737,35 +737,27 @@ class SignalWorker:
                         sig_key = tag.replace("telegram_", "")
                         logger.warning(f"SignalWorker: Trade {trade.pair} (# {trade.id}) is missing SL or TP! Attempting immediate fix using signal {sig_key}...")
                         
-                        # Get original signal to recover SL/TP prices
+                        # Get original signal to recover SL/TP prices by re-parsing the text
                         conn = self.store._connect()
                         cursor = conn.cursor()
-                        cursor.execute("SELECT occurred_at, side, entry_range, target, stop FROM ingest_queue WHERE idempotency_key = ?", (sig_key,))
+                        cursor.execute("SELECT text FROM ingest_queue WHERE idempotency_key = ?", (sig_key,))
                         row = cursor.fetchone()
                         conn.close()
                         
                         if row:
-                            # Recover data
-                            sig_side = row[1]
-                            sig_target = row[3]
-                            sig_stop = row[4]
-                            
-                            # Fake an event to reuse process_signal logic
-                            from .telegram_listener import SignalEvent, SignalSide
-                            event = SignalEvent(
-                                type='ENTRY',
-                                symbol=trade.pair,
-                                side=SignalSide.LONG if sig_side == 'LONG' else SignalSide.SHORT,
-                                entry_range=(0,0), # Not needed for SL/TP
-                                target=sig_target,
-                                stop=sig_stop
-                            )
-                            # This will attempt to place missing SL/TP
-                            self.process_signal(sig_key, event, is_emergency=True)
+                            signal_text = row[0]
+                            # Re-parse the original signal text to get SL/TP
+                            event = parse_signal_text(signal_text)
+                            if event:
+                                logger.info(f"SignalWorker: Successfully recovered signal data for {trade.pair}. SL: {event.stop}, TP: {event.target}")
+                                # This will attempt to place missing SL/TP
+                                self.process_signal(sig_key, event, {'occurred_at': trade.open_date.isoformat()}, is_emergency=True)
+                            else:
+                                logger.error(f"SignalWorker: Failed to re-parse original signal text for {sig_key}")
                         else:
-                            logger.error(f"SignalWorker: Could not find original signal {sig_key} for trade {trade.id} repair.")
+                            logger.error(f"SignalWorker: Could not find original signal {sig_key} in database.")
         except Exception as e:
-            logger.error(f"Emergency reconcile error: {e}")
+            logger.exception(f"Emergency reconcile error: {e}")
 
     def _run_loop(self):
         logger.info("SignalWorker started")
