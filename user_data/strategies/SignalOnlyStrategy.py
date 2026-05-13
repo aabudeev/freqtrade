@@ -200,8 +200,13 @@ class SignalOnlyStrategy(IStrategy):
                     all_exchange_orders = open_orders + pending_orders
                     
                     # --- PASSIVE MONITORING ---
+                    bot = kwargs.get('bot')
+                    if not bot:
+                        continue
+                        
                     # Fetch current state from exchange
-                    positions = [p for p in self.bot.exchange.fetch_positions() if p['symbol'] == trade.pair]
+                    positions = [p for p in bot.exchange.fetch_positions() if p['symbol'] == trade.pair]
+
                     
                     # Check if position exists
                     has_position = len(positions) > 0
