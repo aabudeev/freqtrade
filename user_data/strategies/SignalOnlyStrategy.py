@@ -200,11 +200,29 @@ class SignalOnlyStrategy(IStrategy):
                     all_exchange_orders = open_orders + pending_orders
                     
                     # --- PASSIVE MONITORING ---
-                    # Only log a warning if position is missing, but NEVER close the trade in DB.
-                    if is_orphan and not all_exchange_orders:
-                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) appears to have NO position and NO orders on exchange! Check manually.")
+                    has_any_order = len(all_exchange_orders) > 0
+                    if not has_position and not has_any_order:
+                        logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position/orders on exchange. FORCE CLOSING in DB.")
+                        # Mark trade as closed in DB with current rate
+                        try:
+                            # Use a small timeout to avoid blocking
+                            current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
+                            trade.close_date = datetime.now(timezone.utc)
+                            trade.is_open = False
+                            trade.exit_reason = "reconciled_missing"
+                            trade.close_rate = current_rate
+                            # Calculate profit based on current rate
+                            trade.close_profit = trade.calc_profit_amount(current_rate)
+                            trade.close_profit_pct = trade.calc_profit_ratio(current_rate)
+                            
+                            from freqtrade.persistence import Trade
+                            Trade.commit()
+                            logger.info(f"BINGX RECONCILE: Trade {trade.id} successfully force-closed in database.")
+                        except Exception as e_close:
+                            logger.error(f"BINGX RECONCILE: Failed to force-close trade {trade.id}: {e_close}")
+
                         continue  # Skip TP/SL placement for ghost trades
-                    elif is_orphan and all_exchange_orders:
+                    elif not has_position and has_any_order:
                         logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no position but has orders. Keeping open.")
 
                 except Exception as e_fetch:
