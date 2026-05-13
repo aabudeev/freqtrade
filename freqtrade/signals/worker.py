@@ -5,11 +5,10 @@ from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 from freqtrade.signals.queue_store import SignalQueueStore
 from freqtrade.signals.parser import parse_signal_text, SignalType, SignalSide
-from freqtrade.enums import RPCMessageType, State
+from freqtrade.enums import RPCMessageType, State, SignalDirection
 
 if TYPE_CHECKING:
     from freqtrade.freqtradebot import FreqtradeBot
-    from freqtrade.enums import SignalDirection
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +130,6 @@ class SignalWorker:
                 else:
                     # TTL check (1 hour)
                     occ_dt = datetime.fromisoformat(row['occurred_at'])
-                    # occurred_at is stored as naive UTC in DB
                     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                     age_seconds = (now_utc - occ_dt).total_seconds()
                     
@@ -146,7 +144,6 @@ class SignalWorker:
                     if not row.get('symbol'):
                         try:
                             with self.store._connect() as con:
-                                # Remove :USDT suffix for DB storage to match existing convention if needed
                                 clean_sym = event.symbol.split('/')[0] if '/' in event.symbol else event.symbol
                                 con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (clean_sym, key))
                                 con.commit()
@@ -158,8 +155,7 @@ class SignalWorker:
                             'type': RPCMessageType.STATUS,
                             'status': f"✅ Parsed signal {event.type.name} {event.symbol}"
                         })
-                    
-                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+
                         # Execution via RPC
                         if event.type == SignalType.ENTRY:
                             from freqtrade.persistence import Trade
@@ -898,12 +894,67 @@ class SignalWorker:
         except Exception as e:
             logger.error(f"Global status sync error: {e}")
 
+    def _emergency_reconcile(self):
+        """One-time check for open trades without SL/TP on startup"""
+        from freqtrade.persistence import Trade
+        try:
+            open_trades = Trade.session.query(Trade).filter(Trade.is_open == True).all()
+            if not open_trades:
+                return
+            
+            logger.info(f"SignalWorker: Emergency check for {len(open_trades)} open trades...")
+            for trade in open_trades:
+                has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
+                has_tp = any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders)
+                
+                if not has_sl or not has_tp:
+                    # Get signal key from enter_tag (format: telegram_telegram:123:456)
+                    tag = trade.enter_tag or ""
+                    if tag.startswith("telegram_"):
+                        sig_key = tag.replace("telegram_", "")
+                        logger.warning(f"SignalWorker: Trade {trade.pair} (# {trade.id}) is missing SL or TP! Attempting immediate fix using signal {sig_key}...")
+                        
+                        # Get original signal to recover SL/TP prices
+                        conn = self.store._connect()
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT occurred_at, side, entry_range, target, stop FROM ingest_queue WHERE idempotency_key = ?", (sig_key,))
+                        row = cursor.fetchone()
+                        conn.close()
+                        
+                        if row:
+                            # Recover data
+                            sig_side = row[1]
+                            sig_target = row[3]
+                            sig_stop = row[4]
+                            
+                            # Fake an event to reuse process_signal logic
+                            from .telegram_listener import SignalEvent, SignalSide
+                            event = SignalEvent(
+                                type='ENTRY',
+                                symbol=trade.pair,
+                                side=SignalSide.LONG if sig_side == 'LONG' else SignalSide.SHORT,
+                                entry_range=(0,0), # Not needed for SL/TP
+                                target=sig_target,
+                                stop=sig_stop
+                            )
+                            # This will attempt to place missing SL/TP
+                            self.process_signal(sig_key, event, is_emergency=True)
+                        else:
+                            logger.error(f"SignalWorker: Could not find original signal {sig_key} for trade {trade.id} repair.")
+        except Exception as e:
+            logger.error(f"Emergency reconcile error: {e}")
+
     def _run_loop(self):
         logger.info("SignalWorker started")
         import time
         last_sync = 0
         last_reconcile = 0
         last_diag = 0
+        
+        # Initial wait for bot to fully initialize
+        self._stop_event.wait(5)
+        self._emergency_reconcile()
+
         while not self._stop_event.is_set():
             try:
                 now = time.time()
