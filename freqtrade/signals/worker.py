@@ -795,6 +795,11 @@ class SignalWorker:
                     self._sync_signal_statuses()
                     last_sync = now
                 
+                # Reconcile exchange positions every 5 minutes
+                if now - last_reconcile > 300:
+                    self._reconcile_exchange_positions()
+                    last_reconcile = now
+                
                 # Diagnostics every 10 minutes
                 if now - last_diag > 600:
                     self._run_diagnostic()
