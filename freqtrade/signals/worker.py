@@ -326,6 +326,10 @@ class SignalWorker:
                                             self.bot.rpc._rpc._rpc_force_exit(trade.pair, trade.id)
                                             return len(claimed) # Stop processing this trade
                                             
+                                        # Actual SL placement
+                                        self.bot.create_stoploss_order(trade, sl_price)
+                                        logger.info(f"Signal SL order placed on exchange: {sl_price}")
+                                            
                                     except Exception as e:
                                         error_msg = str(e).lower()
                                         # BingX error 110412: "Stop Loss price should be greater than the current price" (for short)
@@ -384,6 +388,10 @@ class SignalWorker:
                                                 logger.warning(f"Price {current_price} already past Auto SL {auto_sl_price}. EMERGENCY EXIT.")
                                                 self.bot.rpc._rpc._rpc_force_exit(trade.pair, trade.id)
                                                 return len(claimed)
+
+                                        # Actual Auto SL placement
+                                        self.bot.create_stoploss_order(trade, auto_sl_price)
+                                        logger.info(f"Auto SL order placed on exchange: {auto_sl_price}")
 
                                     except Exception as e:
                                         logger.error(f"Failed to place auto SL: {e}")
