@@ -229,9 +229,11 @@ class SignalOnlyStrategy(IStrategy):
                     
                     all_exchange_orders = open_orders + pending_orders
 
-                    
-                # --- RECONCILE TAKE PROFIT (TP) ---
+                except Exception as e_fetch:
+                    logger.error(f"BINGX RECONCILE: Fetch error for {trade.pair}: {e_fetch}")
+                    continue
 
+                # --- RECONCILE TAKE PROFIT (TP) ---
                 has_tp = any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders)
                 if not has_tp:
                     try:
