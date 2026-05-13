@@ -406,12 +406,31 @@ class SignalWorker:
                 if trade and not trade.is_open:
                     new_status = "closed_tp"
                     # If profit is negative or SL mentioned in exit reason
-                    if (trade.exit_reason and "stop_loss" in trade.exit_reason.lower()) or \
-                       (trade.close_profit and trade.close_profit < 0):
+                    exit_reason = trade.exit_reason or "unknown"
+                    profit_pct = trade.close_profit_pct or 0.0
+                    
+                    if ("stop_loss" in exit_reason.lower()) or (trade.close_profit and trade.close_profit < 0):
                         new_status = "closed_sl"
                         
-                    logger.info(f"Trade for signal {key} closed ({trade.exit_reason}). Status: {new_status}")
-                    self.store.mark_status(key, new_status, f"Trade closed: {trade.exit_reason}")
+                    logger.info(f"Trade for signal {key} closed ({exit_reason}). Status: {new_status}")
+                    self.store.mark_status(key, new_status, f"Trade closed: {exit_reason}")
+                    
+                    # Manual Telegram notification for exit
+                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                        try:
+                            side_emoji = "🟢" if profit_pct >= 0 else "🔴"
+                            msg = (
+                                f"{side_emoji} *Trade Closed: {trade.pair}*\n"
+                                f"Reason: `{exit_reason}`\n"
+                                f"Profit: `{profit_pct:.2%}`\n"
+                                f"Signal Key: `{key}`"
+                            )
+                            self.bot.rpc.send_msg({
+                                'type': RPCMessageType.STATUS,
+                                'status': msg
+                            })
+                        except Exception as e_msg:
+                            logger.error(f"Failed to send exit notification: {e_msg}")
 
         except Exception as e:
             logger.error(f"Error during trade status synchronization: {e}")
