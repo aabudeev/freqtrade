@@ -840,13 +840,33 @@ class SignalWorker:
             open_signals = [dict(r) for r in open_signals_raw]
             conn.close()
 
+            from freqtrade.persistence import Trade
+            Trade.session.remove() # Ensure fresh session for each sync
+            
+            cursor.execute(
+                "SELECT * FROM ingest_queue "
+                "WHERE status NOT LIKE 'closed%' "
+                "AND status NOT IN ('expired', 'skipped', 'failed_liquidation')"
+            )
+            open_signals_raw = cursor.fetchall()
+            open_signals = [dict(r) for r in open_signals_raw]
+            conn.close()
+
             for sig in open_signals:
-                # Trade tag is telegram_ + idempotency_key
                 tag = f"telegram_{sig['idempotency_key']}"
                 
-                # Use direct session query for maximum reliability
                 try:
+                    # Look up trade by tag
                     trade = Trade.session.query(Trade).filter(Trade.enter_tag == tag).first()
+                    if not trade:
+                        # Fallback: search by pair if it was a very recent entry (within 5 mins)
+                        import datetime
+                        occ = datetime.datetime.fromisoformat(sig['occurred_at'])
+                        if (datetime.datetime.now() - occ).total_seconds() < 300:
+                            trade = Trade.session.query(Trade).filter(
+                                Trade.pair == sig['symbol'], 
+                                Trade.is_open == True
+                            ).order_by(Trade.id.desc()).first()
                 except Exception as e_db:
                     logger.error(f"SYNC: DB error looking up trade for {tag}: {e_db}")
                     continue
@@ -857,18 +877,19 @@ class SignalWorker:
                         if sig['status'] != 'active':
                             new_status = "active"
                     else:
-                        # Ensure reason is a clean string
+                        # Trade is closed!
                         reason = str(trade.exit_reason) if trade.exit_reason else "exit"
                         new_status = f"closed({reason})"
+                        logger.info(f"SYNC: Detected closed trade {trade.id} for signal {sig['idempotency_key']}")
                 else:
-                    # No trade found. 
+                    # No trade record found in DB
                     import datetime
                     occ = datetime.datetime.fromisoformat(sig['occurred_at'])
                     age_min = (datetime.datetime.now() - occ).total_seconds() / 60
                     
                     if sig['status'] in ('ordered', 'active') and age_min > 20:
                         new_status = "expired"
-                    elif sig['status'] == 'failed' and age_min > 240: # 4 hours
+                    elif sig['status'] == 'failed' and age_min > 240:
                         new_status = "expired"
 
                 if new_status and new_status != sig['status']:
