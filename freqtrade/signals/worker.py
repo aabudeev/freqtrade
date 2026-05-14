@@ -224,6 +224,27 @@ class SignalWorker:
                                     logger.info(f"Signal {key}: Price {current_price} is within entry range [{range_low} - {range_high}]. Proceeding.")
                             except Exception as e_range:
                                 logger.warning(f"Signal {key}: Could not check entry range: {e_range}. Proceeding with entry anyway.")
+
+                        # --- SPREAD CHECK (bid/ask safety) ---
+                        try:
+                            ticker = self.bot.exchange.fetch_ticker(event.symbol)
+                            bid = ticker.get('bid')
+                            ask = ticker.get('ask')
+                            if bid and ask:
+                                spread = (ask - bid) / bid
+                                if spread > 0.02:  # 2% limit
+                                    msg = f"Spread too high ({spread*100:.2f}%) for {event.symbol}. Signal skipped for safety."
+                                    logger.warning(msg)
+                                    self.store.mark_status(key, "skipped", msg)
+                                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                        self.bot.rpc.send_msg({
+                                            'type': RPCMessageType.STATUS,
+                                            'status': f"⚠️ {msg}"
+                                        })
+                                    return
+                        except Exception as e_spread:
+                            logger.warning(f"Could not check spread for {event.symbol}: {e_spread}")
+
                         # --- NORMAL ENTRY ---
                         from freqtrade.enums import SignalDirection
                         price = None  
