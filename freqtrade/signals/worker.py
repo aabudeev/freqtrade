@@ -205,23 +205,33 @@ class SignalWorker:
                     
                     if not trade and not is_emergency:
                         # --- ENTRY RANGE CHECK (slippage protection) ---
+                        # Tolerance: 0.5% buffer to account for BingX vs Binance/Bybit price differences
+                        ENTRY_RANGE_TOLERANCE = 0.005  # 0.5%
                         if event.entry_range and len(event.entry_range) == 2:
                             try:
                                 ticker = self.bot.exchange.fetch_ticker(event.symbol)
                                 current_price = ticker.get('last', 0)
                                 range_low, range_high = float(event.entry_range[0]), float(event.entry_range[1])
-                                if current_price and (current_price < range_low or current_price > range_high):
-                                    skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}]"
-                                    logger.warning(f"Signal {key}: {skip_msg}. Skipping entry.")
-                                    self.store.mark_status(key, "skipped", skip_msg)
+                                # Expand range by tolerance to account for cross-exchange price diff
+                                range_low_adj = range_low * (1 - ENTRY_RANGE_TOLERANCE)
+                                range_high_adj = range_high * (1 + ENTRY_RANGE_TOLERANCE)
+                                
+                                if current_price and (current_price < range_low_adj or current_price > range_high_adj):
+                                    # Price is far outside range — return to pending for retry (up to TTL)
+                                    skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}] (tolerance ±{ENTRY_RANGE_TOLERANCE*100:.1f}%)"
+                                    logger.warning(f"Signal {key}: {skip_msg}. Returning to pending for retry.")
+                                    self.store.mark_status(key, "pending", skip_msg)
                                     if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                                         self.bot.rpc.send_msg({
                                             'type': RPCMessageType.STATUS,
-                                            'status': f"⚠️ Skipped {event.symbol}: {skip_msg}"
+                                            'status': f"⏳ {event.symbol}: {skip_msg} — will retry"
                                         })
                                     return
                                 else:
-                                    logger.info(f"Signal {key}: Price {current_price} is within entry range [{range_low} - {range_high}]. Proceeding.")
+                                    if current_price < range_low or current_price > range_high:
+                                        logger.info(f"Signal {key}: Price {current_price} slightly outside [{range_low} - {range_high}] but within tolerance. Proceeding.")
+                                    else:
+                                        logger.info(f"Signal {key}: Price {current_price} is within entry range [{range_low} - {range_high}]. Proceeding.")
                             except Exception as e_range:
                                 logger.warning(f"Signal {key}: Could not check entry range: {e_range}. Proceeding with entry anyway.")
 
