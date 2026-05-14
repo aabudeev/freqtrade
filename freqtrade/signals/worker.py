@@ -28,6 +28,9 @@ class SignalWorker:
         logging.getLogger('freqtrade.exchange').setLevel(logging.WARNING)
         logging.getLogger('freqtrade.exchange.common').setLevel(logging.WARNING)
         logging.getLogger('urllib3').setLevel(logging.WARNING)
+        
+        # Entry range retry tracker: {signal_key: {'count': N, 'last_ts': timestamp}}
+        self._range_retries: dict = {}
 
     def process_once(self) -> int:
         """
@@ -217,14 +220,39 @@ class SignalWorker:
                                 range_high_adj = range_high * (1 + ENTRY_RANGE_TOLERANCE)
                                 
                                 if current_price and (current_price < range_low_adj or current_price > range_high_adj):
-                                    # Price is far outside range — return to pending for retry (up to TTL)
-                                    skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}] (tolerance ±{ENTRY_RANGE_TOLERANCE*100:.1f}%)"
-                                    logger.warning(f"Signal {key}: {skip_msg}. Returning to pending for retry.")
+                                    # --- Throttled retry: max 10 attempts, 1 per minute ---
+                                    retry_info = self._range_retries.get(key, {'count': 0, 'last_ts': 0})
+                                    now_ts = datetime.now().timestamp()
+                                    
+                                    if retry_info['count'] >= 10:
+                                        # Exhausted retries — permanent skip
+                                        skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}] after 10 retries (10 min)"
+                                        logger.warning(f"Signal {key}: {skip_msg}. Final skip.")
+                                        self.store.mark_status(key, "skipped", skip_msg)
+                                        self._range_retries.pop(key, None)
+                                        if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                            self.bot.rpc.send_msg({
+                                                'type': RPCMessageType.STATUS,
+                                                'status': f"⚠️ Skipped {event.symbol}: {skip_msg}"
+                                            })
+                                        return
+                                    
+                                    if now_ts - retry_info['last_ts'] < 60:
+                                        # Too soon since last retry — skip silently
+                                        return
+                                    
+                                    # Record this retry attempt
+                                    retry_info['count'] += 1
+                                    retry_info['last_ts'] = now_ts
+                                    self._range_retries[key] = retry_info
+                                    
+                                    skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}] (attempt {retry_info['count']}/10)"
+                                    logger.warning(f"Signal {key}: {skip_msg}. Will retry in 1 min.")
                                     self.store.mark_status(key, "pending", skip_msg)
-                                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                    if retry_info['count'] == 1 and self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
                                         self.bot.rpc.send_msg({
                                             'type': RPCMessageType.STATUS,
-                                            'status': f"⏳ {event.symbol}: {skip_msg} — will retry"
+                                            'status': f"⏳ {event.symbol}: Price outside range — retrying for 10 min"
                                         })
                                     return
                                 else:
