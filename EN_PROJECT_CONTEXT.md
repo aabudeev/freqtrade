@@ -25,11 +25,17 @@ This file is a **portable memory** for the project. In a new chat: "read all .md
 - **Strategy**: `SignalOnlyStrategy` — entries from Telegram channel, not indicators
 - **DB**: SQLite (`user_data/trades_signals.sqlite`) — bind mount, not in git
 
-## Current Status (2026-05-06)
+## Current Status (2026-05-14)
 
-- **Bot is stable**: full ENTRY → TP/SL → EXIT cycle works without errors
-- **Signal pipeline**: Telegram → parser → worker → exchange → DB → notifications
-- **Smart Filter**: to be implemented after 1-2 weeks of stable operation
+- **Bot is stable**: Full cycle ENTRY → TP/SL → EXIT works without errors.
+- **Safety mechanisms restored**:
+  - Pre-entry spread check (max 2%).
+  - `entry_range` check (±0.5% buffer for cross-exchange price differences, up to 10 retries with 1 min interval).
+  - Emergency Exit (if current price is already past SL at entry time).
+  - Auto SL (2.5%) and TP (3.5%) fallback if missing from signal.
+  - Precise P&L for exchange-closed trades (Order History -> Ticker -> Open Rate).
+- **Signal Pipeline**: Telegram → parser → worker → exchange → DB → notifications
+- **Smart Filter**: To be implemented after 1-2 weeks of stable operation
 
 ## Key Code Files
 

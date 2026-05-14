@@ -129,14 +129,16 @@ SignalWorker.process_once() → claim_pending() → parse → execute
 
 ### Entry (ENTRY signal)
 
-1. `SignalWorker` receives ENTRY signal
-2. `_rpc_force_entry(pair, price=None, order_type="market")` → Freqtrade opens trade
-3. Freqtrade creates `Trade` + `Order` (ft_order_side=`'buy'` for LONG)
-4. Worker sets `trade.stop_loss`, `trade.stoploss`, `trade.stop_loss_pct`
-5. Worker validates SL against liquidation price (caps if needed)
-6. Worker places **TP limit order** on exchange via direct CCXT API
-7. TP order is **registered in DB** with `ft_order_side=trade.exit_side` (e.g. `'sell'`)
-8. Reconcile (next `bot_loop_start`) places **SL trigger order** on exchange
+1. `SignalWorker` receives ENTRY signal and runs **pre-flight checks**:
+   - **Spread Check**: If bid/ask spread > 2%, the trade is skipped (`skipped` permanently).
+   - **Entry Range Check**: Current price is compared to the entry range (with ±0.5% buffer for exchange differences). If price is too far out, signal is returned to `pending` (up to 10 retries with 1 min interval).
+2. `_rpc_force_entry(pair, price=None, order_type="market")` → Freqtrade opens trade.
+3. Freqtrade creates `Trade` + `Order` (ft_order_side=`'buy'` for LONG).
+4. Worker sets `trade.stop_loss`, `trade.stoploss`, `trade.stop_loss_pct` (uses 2.5% auto-SL if not in signal).
+5. **Emergency Exit Check**: If the current price is *already* past the SL level after entry, an immediate `_rpc_force_exit` is triggered to prevent an unprotected position.
+6. Worker places **TP limit order** on exchange via direct CCXT API (uses 3.5% auto-TP if not in signal).
+7. TP order is **registered in DB** with `ft_order_side=trade.exit_side` (e.g. `'sell'`).
+8. Reconcile (next `bot_loop_start`) places **SL trigger order** on exchange.
 
 ### TP Hit (exchange fills TP order)
 
@@ -145,13 +147,17 @@ SignalWorker.process_once() → claim_pending() → parse → execute
 3. `order.ft_order_side == trade.exit_side` → matches → trade closes
 4. `trade.close(price)` → `is_open=0`, `close_rate`, `close_profit` set
 
-### SL Hit (exchange fills SL trigger)
+### SL Hit (exchange fills SL trigger) or Ghost Trade
 
-1. Position disappears from exchange
-2. `exit_positions()` → `check_exit_amount()` → wallet shows 0 balance
-3. `handle_onexchange_order()` → fetches all orders from exchange
-4. Finds filled sell order → creates/updates Order record → `update_trade_state()`
-5. Trade closes with `exit_reason='sold_on_exchange'`
+1. Position disappears from exchange.
+2. `exit_positions()` → `check_exit_amount()` → wallet shows 0 balance.
+3. `handle_onexchange_order()` → fetches all orders from exchange.
+4. Finds filled sell order → creates/updates Order record → `update_trade_state()`.
+5. Trade closes with `exit_reason='sold_on_exchange'`.
+6. **3-tier P&L Recovery (Ghost Reconcile)**: If Freqtrade missed the position closure (e.g. bot was offline), it tries to recover the exact exit price to preserve statistics:
+   - *Tier 1*: Search for the closed order in exchange history.
+   - *Tier 2*: Ticker (current price), if order not found.
+   - *Tier 3*: Open Rate (breakeven) as a last resort fallback.
 
 ### TP/SL Signal from Channel
 
@@ -306,12 +312,16 @@ order.ft_order_side = self.exit_side
 
 ## Failure Modes & Protections
 
-| Failure | Protection | Result |
+| Failure / Threat | Protection | Result |
 |---------|-----------|--------|
+| High volatility / low liquidity | Pre-entry spread check (max 2%) | Signal skipped |
+| Price outside entry range (slippage) | `entry_range` check with ±0.5% buffer | Retry up to 10m, then `skipped` |
+| Trade opened but price already breached SL | `Emergency Exit` right after entry | Market exit, prevents loss |
+| Signal missing SL or TP | `Auto-SL` (2.5%) and `Auto-TP` (3.5%) fallback | Position is always protected |
 | Unknown `ft_order_side` (e.g. `'exit'`) | Auto-fix to `exit_side` + warning log | No crash |
 | TP order placed but response parsing fails | Handles both `data.orderId` and `data.order.orderId` | TP registered in DB |
 | `ft_price` is None (canceled market order) | Fallback chain: `price → order.price → order.average → 0.0` | No `IntegrityError` |
-| Orphan trade (no position on exchange) | Reconcile skips, `handle_onexchange_order` closes | Auto-cleanup |
+| Orphan trade (no position on exchange) | 3-tier P&L Recovery, then forced close | Stats preserved, auto-cleanup |
 | Reconcile tries TP/SL for dead position | BingX returns `101290` (Reduce Only) / `109420` (position not exist) → logged, skipped | No crash |
 | TP cancelled by timeout | `unfilledtimeout.exit = 525600` (365 days) | TP stays active |
 | Proxy/network failure | Worker catches exceptions, retries, returns signal to `pending` | Resilient |
