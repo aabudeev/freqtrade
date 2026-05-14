@@ -150,12 +150,9 @@ class SignalOnlyStrategy(IStrategy):
                 logger.error(f"BINGX RECONCILE: Could not fetch positions: {e_pos}")
                 return  # SAFETY: If we can't fetch positions, do NOT assume all trades are ghosts
 
-            # SAFETY: If exchange returned zero positions but we have open trades,
-            # this is likely an API issue. Do NOT wipe all trades.
-            if not all_positions and open_trades:
-                logger.warning(f"BINGX RECONCILE: fetch_positions returned EMPTY but we have {len(open_trades)} open trades. Skipping reconciliation (API issue?).")
-                return
-
+            # SAFETY: If exchange returned zero positions, that is completely normal if our only trade hit SL/TP.
+            # We ONLY skip if the API call raised an exception (handled above).
+            
             # Log what we got for debugging
             pos_symbols = [p.get('symbol', '?') for p in all_positions if float(p.get('contracts', 0) or p.get('size', 0) or 0) != 0]
             logger.info(f"BINGX RECONCILE: Active positions on exchange: {pos_symbols}")
@@ -456,5 +453,15 @@ class SignalOnlyStrategy(IStrategy):
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
                            rate: float, time_in_force: str, sell_reason: str,
                            current_time: datetime, **kwargs) -> bool:
+        
+        # We MUST block Freqtrade's internal price-based exits (stop_loss, trailing_stop_loss, roi).
+        # Since we use native BingX STOP_MARKET and LIMIT orders, the exchange will close the position.
+        # If Freqtrade tries to exit at the same time, it causes 101290 Reduce Only errors (race condition).
+        # By blocking them here, Freqtrade leaves the trade open until our Reconcile loop 
+        # detects the missing position and cleanly finalizes the statistics.
+        if sell_reason in ['stop_loss', 'trailing_stop_loss', 'roi']:
+            # logger.info(f"BLOCKING NATIVE EXIT: {pair} reason: {sell_reason}. Exchange manages SL/TP.")
+            return False
+            
         logger.info(f"TRADE EXITING: {pair} reason: {sell_reason}")
         return True
