@@ -45,7 +45,7 @@ class SignalOnlyStrategy(IStrategy):
     stoploss = -0.99           # Fallback only
     
     # --- DYNAMIC STOPLOSS ENABLED ---
-    use_custom_stoploss = True
+    use_custom_stoploss = False
     
     # TRAILING STOP DISABLED
     trailing_stop = False
@@ -86,29 +86,12 @@ class SignalOnlyStrategy(IStrategy):
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
         """
-        Force Freqtrade to use our signal-based stop loss.
-        Returns the stoploss as a percentage (negative) of current_rate.
+        DISABLED: We rely entirely on BingX native STOP_MARKET orders.
+        Using Freqtrade's internal custom_stoploss causes race conditions where 
+        both Freqtrade and the Exchange try to close the trade simultaneously, 
+        resulting in 101290 Reduce Only errors.
         """
-        signal_sl_str = trade.get_custom_data("signal_sl")
-        if signal_sl_str:
-            sl_price = float(signal_sl_str)
-            
-            # Freqtrade's custom_stoploss expects a ratio relative to current_rate.
-            # To keep the absolute sl_price fixed, we must recalculate the ratio
-            # based on the current market price (current_rate).
-            
-            leverage = trade.leverage or 1.0
-            if not trade.is_short:
-                # LONG: (sl_price / current_rate - 1) * leverage
-                ratio = (sl_price / current_rate - 1) * leverage
-            else:
-                # SHORT: (1 - sl_price / current_rate) * leverage
-                ratio = (1 - sl_price / current_rate) * leverage
-                
-            return ratio
-
-        # Fallback to strategy default
-        return self.stoploss
+        return -1.0
 
     def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
         """
