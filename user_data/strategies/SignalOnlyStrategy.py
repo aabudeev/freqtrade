@@ -197,20 +197,55 @@ class SignalOnlyStrategy(IStrategy):
                 if not has_position:
                     logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange (age: {trade_age_seconds:.0f}s). FORCE CLOSING.")
                     
-                    # Update trade object
-                    current_rate = self.bot_loop_start_current_rate if hasattr(self, 'bot_loop_start_current_rate') else trade.open_rate
+                    # --- Find ACTUAL close price (critical for accurate statistics) ---
+                    actual_close_rate = None
+                    
+                    # 1. Try to get the real exit price from BingX order history
+                    try:
+                        closed_orders = api.fetch_closed_orders(trade.pair, limit=20)
+                        expected_exit_side = 'sell' if not trade.is_short else 'buy'
+                        for co in reversed(closed_orders):  # most recent first
+                            if co.get('status') == 'closed' and float(co.get('filled', 0) or 0) > 0:
+                                co_side = str(co.get('side', '')).lower()
+                                if co_side == expected_exit_side:
+                                    price = co.get('average') or co.get('price')
+                                    if price and float(price) > 0:
+                                        actual_close_rate = float(price)
+                                        logger.info(f"BINGX RECONCILE: Found actual close price from order history for {trade.pair}: {actual_close_rate}")
+                                        break
+                    except Exception as e_hist:
+                        logger.debug(f"BINGX RECONCILE: Could not fetch order history for {trade.pair}: {e_hist}")
+                    
+                    # 2. Fallback: current market price (close to reality)
+                    if not actual_close_rate:
+                        try:
+                            ticker = api.fetch_ticker(trade.pair)
+                            actual_close_rate = float(ticker.get('last', 0))
+                            if actual_close_rate > 0:
+                                logger.info(f"BINGX RECONCILE: Using current market price for {trade.pair}: {actual_close_rate}")
+                            else:
+                                actual_close_rate = None
+                        except Exception as e_tick:
+                            logger.debug(f"BINGX RECONCILE: Could not fetch ticker for {trade.pair}: {e_tick}")
+                    
+                    # 3. Last resort: open_rate (profit = 0, not ideal but won't crash)
+                    if not actual_close_rate:
+                        actual_close_rate = trade.open_rate
+                        logger.warning(f"BINGX RECONCILE: Using open_rate as last resort for {trade.pair} — statistics may be inaccurate!")
+                    
+                    # Update trade object with real price
                     trade.close_date = datetime.now(timezone.utc)
                     trade.is_open = False
                     trade.exit_reason = "reconciled_missing_position"
-                    trade.close_rate = current_rate
-                    trade.close_profit = trade.calc_profit_ratio(current_rate)
-                    trade.close_profit_abs = trade.calc_profit(current_rate)
+                    trade.close_rate = actual_close_rate
+                    trade.close_profit = trade.calc_profit_ratio(actual_close_rate)
+                    trade.close_profit_abs = trade.calc_profit(actual_close_rate)
                     
                     # Force commit to DB
                     from freqtrade.persistence import Trade
                     Trade.session.add(trade)
                     Trade.session.commit()
-                    logger.info(f"BINGX RECONCILE: Trade {trade.id} closed successfully.")
+                    logger.info(f"BINGX RECONCILE: Trade {trade.id} closed at {actual_close_rate} (profit: {trade.close_profit_abs:.4f} USDT).")
                     continue
 
                 # --- SAFETY CHECK ---
