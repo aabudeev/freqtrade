@@ -204,6 +204,26 @@ class SignalWorker:
                     trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
                     
                     if not trade and not is_emergency:
+                        # --- ENTRY RANGE CHECK (slippage protection) ---
+                        if event.entry_range and len(event.entry_range) == 2:
+                            try:
+                                ticker = self.bot.exchange.fetch_ticker(event.symbol)
+                                current_price = ticker.get('last', 0)
+                                range_low, range_high = float(event.entry_range[0]), float(event.entry_range[1])
+                                if current_price and (current_price < range_low or current_price > range_high):
+                                    skip_msg = f"Price {current_price} outside entry range [{range_low} - {range_high}]"
+                                    logger.warning(f"Signal {key}: {skip_msg}. Skipping entry.")
+                                    self.store.mark_status(key, "skipped", skip_msg)
+                                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                                        self.bot.rpc.send_msg({
+                                            'type': RPCMessageType.STATUS,
+                                            'status': f"⚠️ Skipped {event.symbol}: {skip_msg}"
+                                        })
+                                    return
+                                else:
+                                    logger.info(f"Signal {key}: Price {current_price} is within entry range [{range_low} - {range_high}]. Proceeding.")
+                            except Exception as e_range:
+                                logger.warning(f"Signal {key}: Could not check entry range: {e_range}. Proceeding with entry anyway.")
                         # --- NORMAL ENTRY ---
                         from freqtrade.enums import SignalDirection
                         price = None  
