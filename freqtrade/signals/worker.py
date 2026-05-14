@@ -311,81 +311,110 @@ class SignalWorker:
                                 elif not trade.is_short and sl_price <= liq_price:
                                     sl_price = liq_price * 1.01
 
-                            if sl_price:
-                                trade.set_custom_data("signal_sl", str(sl_price))
-                                leverage = trade.leverage or 1.0
-                                sl_price_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
-                                sl_trade_ratio = sl_price_ratio * leverage
-                                trade.stop_loss = sl_price
-                                trade.stoploss = -sl_trade_ratio
-                                trade.stop_loss_pct = -sl_trade_ratio
-                                trade.initial_stop_loss = sl_price
-                                trade.initial_stop_loss_pct = -sl_trade_ratio
-                                Trade.commit()
+                            # Auto SL if signal has no stop price
+                            if not sl_price:
+                                sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
+                                logger.info(f"Auto SL set (no signal SL): {sl_price}")
+
+                            trade.set_custom_data("signal_sl", str(sl_price))
+                            leverage = trade.leverage or 1.0
+                            sl_price_ratio = abs((trade.open_rate - sl_price) / trade.open_rate)
+                            sl_trade_ratio = sl_price_ratio * leverage
+                            trade.stop_loss = sl_price
+                            trade.stoploss = -sl_trade_ratio
+                            trade.stop_loss_pct = -sl_trade_ratio
+                            trade.initial_stop_loss = sl_price
+                            trade.initial_stop_loss_pct = -sl_trade_ratio
+                            Trade.commit()
+                            
+                            # --- Price Check Before Placing SL (Emergency Exit) ---
+                            try:
+                                ticker = self.bot.exchange.fetch_ticker(trade.pair)
+                                current_price = ticker.get('last') or ticker.get('close')
                                 
+                                is_past_sl = False
+                                if current_price:
+                                    if trade.is_short and current_price >= sl_price:
+                                        is_past_sl = True
+                                    elif not trade.is_short and current_price <= sl_price:
+                                        is_past_sl = True
+                                
+                                if is_past_sl:
+                                    logger.warning(f"Price {current_price} already past SL {sl_price}. EMERGENCY EXIT.")
+                                    self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                                    return
+                            except Exception as e_check:
+                                logger.warning(f"Could not check price vs SL: {e_check}")
+                            
+                            try:
+                                # Place SL order on exchange immediately
+                                self.bot.create_stoploss_order(trade, sl_price)
+                                logger.info(f"Signal SL order placed: {sl_price}")
+                            except Exception as e:
+                                logger.error(f"Failed to place signal SL: {e}")
+                                # Fallback to auto SL
+                                auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
                                 try:
-                                    # Place SL order on exchange immediately
-                                    self.bot.create_stoploss_order(trade, sl_price)
-                                    logger.info(f"Signal SL order placed: {sl_price}")
-                                except Exception as e:
-                                    logger.error(f"Failed to place signal SL: {e}")
-                                    # Fallback to auto SL
-                                    auto_sl_price = trade.open_rate * (1 - default_sl_pct) if not trade.is_short else trade.open_rate * (1 + default_sl_pct)
-                                    try:
-                                        self.bot.create_stoploss_order(trade, auto_sl_price)
-                                        logger.info(f"Auto SL fallback placed: {auto_sl_price}")
-                                    except Exception:
-                                        pass
+                                    self.bot.create_stoploss_order(trade, auto_sl_price)
+                                    logger.info(f"Auto SL fallback placed: {auto_sl_price}")
+                                except Exception:
+                                    pass
 
                         # --- TP Handling ---
                         has_tp = any(o.ft_order_side == trade.exit_side and o.ft_is_open for o in trade.orders)
                         if not has_tp:
                             tp_price = float(event.target) if event.target else None
-                            if tp_price:
-                                trade.set_custom_data("signal_tp", str(tp_price))
-                                symbol = trade.pair.replace("/", "-").split(":")[0]
-                                exit_side = trade.exit_side
-                                logger.info(f"Placing TP: {symbol} at {tp_price}")
-                                try:
-                                    tp_order = self.bot.exchange._api.swapV2PrivatePostTradeOrder({
-                                        "symbol": symbol,
-                                        "side": exit_side.upper(),
-                                        "positionSide": "BOTH",
-                                        "type": "LIMIT",
-                                        "quantity": trade.amount,
-                                        "price": tp_price,
-                                        "reduceOnly": "true"
-                                    })
-                                    if tp_order and 'data' in tp_order:
-                                        new_id = tp_order['data'].get('orderId')
-                                        if not new_id and isinstance(tp_order['data'].get('order'), dict):
-                                            new_id = tp_order['data']['order'].get('orderId')
-                                        if new_id:
-                                            # Register Order in DB
-                                            from freqtrade.persistence import Order
-                                            tp_order_obj = Order(
-                                                ft_trade_id=trade.id,
-                                                ft_pair=trade.pair,
-                                                ft_is_open=True,
-                                                ft_order_side=exit_side,
-                                                ft_amount=trade.amount,
-                                                ft_price=tp_price,
-                                                order_id=str(new_id),
-                                                status='open',
-                                                symbol=trade.pair,
-                                                order_type='limit',
-                                                side=exit_side,
-                                                amount=trade.amount,
-                                                filled=0.0,
-                                                remaining=trade.amount,
-                                                price=tp_price,
-                                                order_date=datetime.now(timezone.utc),
-                                            )
-                                            trade.orders.append(tp_order_obj)
-                                            Trade.commit()
-                                            logger.info(f"TP order {new_id} registered.")
-                                except Exception as e:
-                                    logger.error(f"Failed to place TP: {e}")
+
+                            # Auto TP if signal has no target price
+                            if not tp_price:
+                                safe_tp_pct = max(default_tp_pct, 0.005)
+                                tp_price = trade.open_rate * (1 + safe_tp_pct) if not trade.is_short else trade.open_rate * (1 - safe_tp_pct)
+                                logger.info(f"Auto TP set (no signal TP): {tp_price}")
+
+                            trade.set_custom_data("signal_tp", str(tp_price))
+                            symbol = trade.pair.replace("/", "-").split(":")[0]
+                            exit_side = trade.exit_side
+                            logger.info(f"Placing TP: {symbol} at {tp_price}")
+                            try:
+                                tp_order = self.bot.exchange._api.swapV2PrivatePostTradeOrder({
+                                    "symbol": symbol,
+                                    "side": exit_side.upper(),
+                                    "positionSide": "BOTH",
+                                    "type": "LIMIT",
+                                    "quantity": trade.amount,
+                                    "price": tp_price,
+                                    "reduceOnly": "true"
+                                })
+                                if tp_order and 'data' in tp_order:
+                                    new_id = tp_order['data'].get('orderId')
+                                    if not new_id and isinstance(tp_order['data'].get('order'), dict):
+                                        new_id = tp_order['data']['order'].get('orderId')
+                                    if new_id:
+                                        # Register Order in DB
+                                        from freqtrade.persistence import Order
+                                        tp_order_obj = Order(
+                                            ft_trade_id=trade.id,
+                                            ft_pair=trade.pair,
+                                            ft_is_open=True,
+                                            ft_order_side=exit_side,
+                                            ft_amount=trade.amount,
+                                            ft_price=tp_price,
+                                            order_id=str(new_id),
+                                            status='open',
+                                            symbol=trade.pair,
+                                            order_type='limit',
+                                            side=exit_side,
+                                            amount=trade.amount,
+                                            filled=0.0,
+                                            remaining=trade.amount,
+                                            price=tp_price,
+                                            order_date=datetime.now(timezone.utc),
+                                        )
+                                        trade.orders.append(tp_order_obj)
+                                        Trade.commit()
+                                        logger.info(f"TP order {new_id} registered.")
+                            except Exception as e:
+                                logger.error(f"Failed to place TP: {e}")
 
                         Trade.commit()
                         if not is_emergency:
