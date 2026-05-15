@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_mode', 'fixed');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_fixed_amount', '20');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('stake_percentage', '3');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('default_leverage', '25');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('default_leverage', '18');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('entry_mode', 'single');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('exchange_mode', 'vst');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('strategy_mode', 'signal');
