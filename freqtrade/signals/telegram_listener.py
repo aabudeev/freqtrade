@@ -184,7 +184,10 @@ class TelegramSignalsListener:
             # We skip ENTRY signals older than 5 minutes (300 seconds) entirely.
             # We ALWAYS process TAKE_PROFIT / STOP_LOSS exits, because they might be 
             # needed to close a trade that is still open.
-            if ev.type.name == "ENTRY" and age_seconds > 300:
+            from freqtrade.signals.parser import parse_signal_text
+            parsed_signal = parse_signal_text(ev.text)
+            
+            if parsed_signal and parsed_signal.type.name == "ENTRY" and age_seconds > 300:
                 logger.debug("Skipping old entry signal %s (age %ds)", ev.idempotency_key, age_seconds)
                 return
 
