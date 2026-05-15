@@ -132,10 +132,9 @@ class TelegramSignalsListener:
             self._client.add_event_handler(handler, events.NewMessage(chats=[entity]))
             logger.info("Telegram signals listener connected (peer %s)", peer)
 
-            # Sync history (last 50 messages) on startup
-            # We use is_startup=True to only pick up messages from the last 10 minutes
-            logger.info("Loading signal history on startup (ignoring messages older than 10m)...")
-            await self._sync_history(entity, is_startup=True)
+            # Sync history (last 5 messages) on startup
+            logger.info("Loading signal history on startup (last 5, max 5m old)...")
+            await self._sync_history(entity, limit=5)
 
             # --- PERIODIC SYNC TASK ---
             # To prevent missing messages during proxy drops
@@ -145,7 +144,7 @@ class TelegramSignalsListener:
                     try:
                         if self._client and self._client.is_connected():
                             logger.debug("Periodic signal history sync starting...")
-                            await self._sync_history(entity, limit=20)
+                            await self._sync_history(entity, limit=5)
                     except Exception as e:
                         logger.warning(f"Periodic history sync failed: {e}")
 
@@ -165,7 +164,7 @@ class TelegramSignalsListener:
                     pass
                 self._client = None
 
-    async def _ingest_message(self, msg, force_new=False) -> None:
+    async def _ingest_message(self, msg) -> None:
         from freqtrade.signals.telethon_message import message_dict_to_ingest_event
         from datetime import datetime, timezone
         try:
@@ -174,31 +173,32 @@ class TelegramSignalsListener:
             if not ev:
                 return
 
-            # --- COLD START FILTER ---
-            # If force_new is True, we only ingest if signal is very recent (e.g. 10 mins)
-            if force_new:
-                now = datetime.now(timezone.utc)
-                # ev.occurred_at is already UTC-aware if parser did it right
-                occ = ev.occurred_at
-                if occ.tzinfo is None:
-                    occ = occ.replace(tzinfo=timezone.utc)
-                
-                age_seconds = (now - occ).total_seconds()
-                if age_seconds > 600: # 10 minutes
-                    logger.debug("Cold start: skipping history message %s (age %ds)", ev.idempotency_key, age_seconds)
-                    return
+            # --- AGE FILTER (Max 5 minutes for ENTRY signals) ---
+            now = datetime.now(timezone.utc)
+            occ = ev.occurred_at
+            if occ.tzinfo is None:
+                occ = occ.replace(tzinfo=timezone.utc)
+            
+            age_seconds = (now - occ).total_seconds()
+            
+            # We skip ENTRY signals older than 5 minutes (300 seconds) entirely.
+            # We ALWAYS process TAKE_PROFIT / STOP_LOSS exits, because they might be 
+            # needed to close a trade that is still open.
+            if ev.type.name == "ENTRY" and age_seconds > 300:
+                logger.debug("Skipping old entry signal %s (age %ds)", ev.idempotency_key, age_seconds)
+                return
 
             if self._store.enqueue(ev):
                 logger.info("Signals queue: enqueued %s (from %s)", ev.idempotency_key, ev.occurred_at)
         except Exception:
             logger.exception("Error ingesting message")
 
-    async def _sync_history(self, entity, limit=50, is_startup=False) -> None:
+    async def _sync_history(self, entity, limit=5) -> None:
+        # User request: Only scan the last 5 signals.
         async for msg in self._client.iter_messages(entity, limit=limit):
             if not msg:
                 continue
-            # On startup sync, we apply the 'force_new' filter to avoid old signals
-            await self._ingest_message(msg, force_new=is_startup)
+            await self._ingest_message(msg)
 
     def shutdown(self) -> None:
         self._running = False
