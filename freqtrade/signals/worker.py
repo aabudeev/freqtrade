@@ -302,9 +302,9 @@ class SignalWorker:
                                 logger.error(f"Failed to get balance: {e}")
                                 stake_amount = 10.0 # fallback
                         
-                        leverage = event.leverage
-                        if not leverage:
-                            leverage = float(settings.get('default_leverage', 50.0))
+                        # Force leverage to be the one specified in the settings (e.g. 18x), 
+                        # completely ignoring the leverage parsed from the telegram signal text.
+                        leverage = float(settings.get('default_leverage', 50.0))
 
                         # Force ISOLATED margin mode
                         try:
