@@ -762,6 +762,7 @@
                 const entry = td ? td.real_entry : p.entry;
                 const tp = td ? (td.real_tp || p.tp) : p.tp;
                 const sl = td ? td.real_sl : p.sl;
+                const lev = td && td.real_leverage ? td.real_leverage : p.lev;
                 
                 const isReal = !!td;
                 const realBadge = isReal ? '<span style="font-size: 0.65rem; color: #3b82f6; vertical-align: super; margin-left: 2px;">R</span>' : '';
@@ -784,11 +785,14 @@
                 
                 // Formatting for real data (with more precision)
                 const fmt = (val) => typeof val === 'number' ? val.toFixed(4) : val;
+                
+                // For leverage, don't use fixed(4), just stringify or add 'x' if it's a number
+                const formatLev = (val) => typeof val === 'number' ? `${val}x` : val;
 
                 tr.innerHTML = `
                     <td class="coin-name">${p.coin}</td>
                     <td class="${typeClass} val-primary">${p.type}</td>
-                    <td class="val-muted">${p.lev}</td>
+                    <td class="val-muted">${formatLev(lev)}${realBadge}</td>
                     <td class="val-primary">${fmt(entry)}${realBadge}</td>
                     <td style="color: #0ebd73;">${fmt(tp)}${realBadge}</td>
                     <td style="color: #f6465d;">${fmt(sl)}${realBadge}</td>

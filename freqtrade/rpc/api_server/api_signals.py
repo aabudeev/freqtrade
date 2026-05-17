@@ -52,7 +52,7 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
                     t_conn = sqlite3.connect(f"file:{trades_db_path}?mode=ro", uri=True)
                     t_conn.row_factory = sqlite3.Row
                     t_cursor = t_conn.cursor()
-                    t_cursor.execute("SELECT id, is_open, open_rate, stop_loss, exit_reason, close_rate FROM trades WHERE enter_tag = ? LIMIT 1", (tag,))
+                    t_cursor.execute("SELECT id, is_open, open_rate, stop_loss, exit_reason, close_rate, leverage FROM trades WHERE enter_tag = ? LIMIT 1", (tag,))
                     t_row = t_cursor.fetchone()
                     if t_row:
                         t_cursor.execute("SELECT price FROM orders WHERE ft_trade_id = ? AND ft_order_side = 'sell' AND status = 'open' LIMIT 1", (t_row['id'],))
@@ -64,7 +64,8 @@ def get_signals(limit: int = 10, offset: int = 0, config: dict = Depends(get_con
                             "real_tp": o_row['price'] if o_row else None,
                             "real_sl": t_row['stop_loss'],
                             "exit_reason": t_row['exit_reason'],
-                            "close_rate": t_row['close_rate'] if not t_row['is_open'] else None
+                            "close_rate": t_row['close_rate'] if not t_row['is_open'] else None,
+                            "real_leverage": t_row['leverage']
                         }
                     t_conn.close()
                 except Exception:
