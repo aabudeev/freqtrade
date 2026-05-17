@@ -304,7 +304,7 @@ class SignalWorker:
                         
                         # Force leverage to be the one specified in the settings (e.g. 18x), 
                         # completely ignoring the leverage parsed from the telegram signal text.
-                        leverage = float(settings.get('default_leverage', 50.0))
+                        leverage = float(settings.get('default_leverage', 10.0))
 
                         # Force ISOLATED margin mode
                         try:
