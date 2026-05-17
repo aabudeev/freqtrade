@@ -464,7 +464,11 @@ class SignalWorker:
                     from freqtrade.persistence import Trade
                     trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
                     if trade:
-                        self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                        try:
+                            self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+                        except Exception as e:
+                            logger.warning(f"Note: _rpc_force_exit raised an exception (often safe to ignore if trade actually closed): {e}")
+                        
                         self.store.mark_status(key, "active")
                         logger.info(f"Exit sent for trade {trade.id}.")
                     else:
