@@ -2501,8 +2501,11 @@ class Exchange:
         :param cost: Total cost of the order
         :param amount: Amount of the order
         """
-        if fee.get("rate") is not None:
-            return fee.get("rate")
+        # WORKAROUND for CCXT BingX Futures bug where fee["rate"] is multiplied by leverage.
+        # We ignore fee["rate"] and always recalculate it based on cost/amount.
+        # if fee.get("rate") is not None:
+        #     return fee.get("rate")
+        
         fee_curr = fee.get("currency")
         if fee_curr is None:
             return None
