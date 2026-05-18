@@ -361,7 +361,7 @@ class SignalWorker:
                         # --- WAIT FOR ENTRY FILL ---
                         # Exchange API (BingX Futures) will reject TP/SL (reduce_only) if position is 0
                         entry_orders = [o for o in trade.orders if o.ft_order_side == trade.entry_side]
-                        has_filled_entry = any(o.status in ('closed', 'canceled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
+                        has_filled_entry = any(o.status in ('closed', 'canceled', 'cancelled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
                         if not has_filled_entry and len(entry_orders) > 0:
                             # Skip SL/TP processing until the limit entry gets at least partially filled
                             logger.info(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
