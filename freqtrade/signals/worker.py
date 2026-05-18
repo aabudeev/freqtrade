@@ -178,24 +178,31 @@ class SignalWorker:
                     self.store.mark_status(key, "skipped", f"TTL expired: age {age_seconds/3600:.1f}h")
                     return
 
-            logger.info(f"{'[EMERGENCY] ' if is_emergency else ''}Signal {key} successfully parsed: {event}")
-            
-            # Update symbol in DB if it was missing
-            if not row.get('symbol'):
-                try:
-                    with self.store._connect() as con:
-                        clean_sym = event.symbol.split('/')[0] if '/' in event.symbol else event.symbol
-                        con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (clean_sym, key))
-                        con.commit()
-                except Exception as e_db:
-                    logger.warning(f"Failed to update symbol in DB for {key}: {e_db}")
+            if not getattr(self, '_notified_signals', None):
+                self._notified_signals = set()
+                
+            if key not in self._notified_signals:
+                logger.info(f"{'[EMERGENCY] ' if is_emergency else ''}Signal {key} successfully parsed: {event}")
+                
+                # Update symbol in DB if it was missing
+                if not row.get('symbol'):
+                    try:
+                        with self.store._connect() as con:
+                            clean_sym = event.symbol.split('/')[0] if '/' in event.symbol else event.symbol
+                            con.execute("UPDATE ingest_queue SET symbol = ? WHERE idempotency_key = ?", (clean_sym, key))
+                            con.commit()
+                    except Exception as e_db:
+                        logger.warning(f"Failed to update symbol in DB for {key}: {e_db}")
 
-            if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                if not is_emergency:
-                    self.bot.rpc.send_msg({
-                        'type': RPCMessageType.STATUS,
-                        'status': f"✅ Parsed signal {event.type.name} {event.symbol}"
-                    })
+                if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
+                    if not is_emergency:
+                        self.bot.rpc.send_msg({
+                            'type': RPCMessageType.STATUS,
+                            'status': f"✅ Parsed signal {event.type.name} {event.symbol}"
+                        })
+                self._notified_signals.add(key)
+                if len(self._notified_signals) > 1000:
+                    self._notified_signals.clear()
 
                 # Execution via RPC
                 if event.type == SignalType.ENTRY:
@@ -364,7 +371,7 @@ class SignalWorker:
                         has_filled_entry = any(o.status in ('closed', 'canceled', 'cancelled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
                         if not has_filled_entry and len(entry_orders) > 0:
                             # Skip SL/TP processing until the limit entry gets at least partially filled
-                            logger.info(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
+                            logger.debug(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
                             self.store.mark_status(key, "pending")
                             return
 
