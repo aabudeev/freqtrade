@@ -364,7 +364,9 @@ class SignalWorker:
                         has_filled_entry = any(o.status in ('closed', 'canceled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
                         if not has_filled_entry and len(entry_orders) > 0:
                             # Skip SL/TP processing until the limit entry gets at least partially filled
-                            continue
+                            logger.info(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
+                            self.store.mark_status(key, "pending")
+                            return
 
                         # --- SL Handling ---
                         has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
