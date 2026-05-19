@@ -149,6 +149,19 @@ class Bingx(Exchange):
                 self._ws_async.set_sandbox_mode(True)
             logger.info("BingX Sandbox mode enabled for VST trading")
 
+            # Initialize fallback production CCXT client for public API endpoints
+            config_sync = {
+                'enableRateLimit': True,
+                'timeout': self._api.timeout,
+                'socksProxy': getattr(self._api, 'socksProxy', None),
+                'options': self._api.options,
+            }
+            config_sync.pop('apiKey', None)
+            config_sync.pop('secret', None)
+
+            self._public_api = ccxt.bingx(config_sync)
+            logger.info("BingX: Initialized fallback production public CCXT client for Sandbox mode")
+
     def get_balances(self, params: dict | None = None) -> CcxtBalances:
         balances = super().get_balances(params)
         is_vst = getattr(self._api, 'sandbox', False)
@@ -248,6 +261,26 @@ class Bingx(Exchange):
         except ccxt.BaseError as e:
             raise OperationalException(e) from e
 
+    def fetch_ticker(self, pair: str) -> dict:
+        if hasattr(self, '_public_api'):
+            try:
+                if not self._public_api.markets:
+                    self._public_api.load_markets()
+                return self._public_api.fetch_ticker(pair)
+            except Exception as e:
+                logger.warning("BingX: Failed to fetch ticker from production public API: %s. Falling back to default.", e)
+        return super().fetch_ticker(pair)
+
+    def fetch_tickers(self, symbols: list[str] | None = None, params: dict | None = None) -> dict:
+        if hasattr(self, '_public_api'):
+            try:
+                if not self._public_api.markets:
+                    self._public_api.load_markets()
+                return self._public_api.fetch_tickers(symbols, params or {})
+            except Exception as e:
+                logger.warning("BingX: Failed to fetch tickers from production public API: %s. Falling back to default.", e)
+        return super().fetch_tickers(symbols, params)
+
     def fetch_l2_order_book(self, pair: str, limit: int = 100) -> dict:
         valid_limits = [5, 10, 20, 50, 100, 500, 1000]
         bingx_limit = 5
@@ -257,6 +290,14 @@ class Bingx(Exchange):
                 break
         if limit > 1000:
             bingx_limit = 1000
+
+        if hasattr(self, '_public_api'):
+            try:
+                if not self._public_api.markets:
+                    self._public_api.load_markets()
+                return self._public_api.fetch_l2_order_book(pair, bingx_limit)
+            except Exception as e:
+                logger.warning("BingX: Failed to fetch order book from production public API: %s. Falling back to default.", e)
             
         return super().fetch_l2_order_book(pair, bingx_limit)
 
