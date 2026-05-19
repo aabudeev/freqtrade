@@ -807,9 +807,9 @@ class SignalWorker:
                 except Exception as e:
                     results.append(f"BingX Private API FAILED: {e}")
             
-            logger.info("--- NETWORK DIAGNOSTIC ---")
+            logger.debug("--- NETWORK DIAGNOSTIC ---")
             for res in results[1:]:
-                logger.info(res)
+                logger.debug(res)
         except Exception as e:
             logger.error(f"Diagnostic error: {e}")
 
