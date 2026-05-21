@@ -262,24 +262,32 @@ class Bingx(Exchange):
             raise OperationalException(e) from e
 
     def fetch_ticker(self, pair: str) -> dict:
-        if hasattr(self, '_public_api'):
-            try:
-                if not self._public_api.markets:
-                    self._public_api.load_markets()
-                return self._public_api.fetch_ticker(pair)
-            except Exception as e:
-                logger.warning("BingX: Failed to fetch ticker from production public API: %s. Falling back to default.", e)
-        return super().fetch_ticker(pair)
+        try:
+            return super().fetch_ticker(pair)
+        except Exception as e:
+            if hasattr(self, '_public_api'):
+                logger.warning("BingX: Failed to fetch ticker from Sandbox API: %s. Falling back to production public API.", e)
+                try:
+                    if not self._public_api.markets:
+                        self._public_api.load_markets()
+                    return self._public_api.fetch_ticker(pair)
+                except Exception as pe:
+                    logger.warning("BingX: Failed to fetch ticker from production public API: %s", pe)
+            raise e
 
     def fetch_tickers(self, symbols: list[str] | None = None, params: dict | None = None) -> dict:
-        if hasattr(self, '_public_api'):
-            try:
-                if not self._public_api.markets:
-                    self._public_api.load_markets()
-                return self._public_api.fetch_tickers(symbols, params or {})
-            except Exception as e:
-                logger.warning("BingX: Failed to fetch tickers from production public API: %s. Falling back to default.", e)
-        return super().fetch_tickers(symbols, params)
+        try:
+            return super().fetch_tickers(symbols, params)
+        except Exception as e:
+            if hasattr(self, '_public_api'):
+                logger.warning("BingX: Failed to fetch tickers from Sandbox API: %s. Falling back to production public API.", e)
+                try:
+                    if not self._public_api.markets:
+                        self._public_api.load_markets()
+                    return self._public_api.fetch_tickers(symbols, params or {})
+                except Exception as pe:
+                    logger.warning("BingX: Failed to fetch tickers from production public API: %s", pe)
+            raise e
 
     def fetch_l2_order_book(self, pair: str, limit: int = 100) -> dict:
         valid_limits = [5, 10, 20, 50, 100, 500, 1000]
@@ -291,15 +299,18 @@ class Bingx(Exchange):
         if limit > 1000:
             bingx_limit = 1000
 
-        if hasattr(self, '_public_api'):
-            try:
-                if not self._public_api.markets:
-                    self._public_api.load_markets()
-                return self._public_api.fetch_l2_order_book(pair, bingx_limit)
-            except Exception as e:
-                logger.warning("BingX: Failed to fetch order book from production public API: %s. Falling back to default.", e)
-            
-        return super().fetch_l2_order_book(pair, bingx_limit)
+        try:
+            return super().fetch_l2_order_book(pair, bingx_limit)
+        except Exception as e:
+            if hasattr(self, '_public_api'):
+                logger.warning("BingX: Failed to fetch order book from Sandbox API: %s. Falling back to production public API.", e)
+                try:
+                    if not self._public_api.markets:
+                        self._public_api.load_markets()
+                    return self._public_api.fetch_l2_order_book(pair, bingx_limit)
+                except Exception as pe:
+                    logger.warning("BingX: Failed to fetch order book from production public API: %s", pe)
+            raise e
 
     def load_leverage_tiers(self) -> dict[str, list[dict]]:
         if self.trading_mode != TradingMode.FUTURES:
