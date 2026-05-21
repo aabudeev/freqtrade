@@ -164,13 +164,11 @@ class SignalOnlyStrategy(IStrategy):
                     logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) is only {trade_age_seconds:.0f}s old, skipping reconciliation.")
                     continue
 
-                # --- LIMIT ENTRY SAFETY ---
-                # If there are no filled or partially filled entry orders for this trade,
-                # then this is a pending limit entry order. We MUST NOT force close it!
-                has_filled_entry = any(o.ft_order_side == trade.entry_side and (o.filled or 0) > 0 for o in trade.orders)
-                if not has_filled_entry:
-                    logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no filled entry orders yet. Skipping reconciliation.")
-                    continue
+                # --- LIMIT ENTRY SAFETY (disabled — back to market orders) ---
+                # has_filled_entry = any(o.ft_order_side == trade.entry_side and (o.filled or 0) > 0 for o in trade.orders)
+                # if not has_filled_entry:
+                #     logger.debug(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has no filled entry orders yet. Skipping reconciliation.")
+                #     continue
 
                 # --- AGGRESSIVE BINGX RECONCILE ---
                 # Match using CCXT unified symbol format (e.g. "DOGE/USDT:USDT")

@@ -319,44 +319,44 @@ class SignalWorker:
                         except Exception:
                             pass
 
-                        # --- ORIGINAL MARKET ENTRY LOGIC (Commented out per user request) ---
-                        # trade = self.bot.rpc._rpc._rpc_force_entry(
-                        #     pair=event.symbol,
-                        #     price=None,
-                        #     order_type="market",
-                        #     order_side=order_side,
-                        #     stake_amount=stake_amount,
-                        #     enter_tag=f"telegram_{key}",
-                        #     leverage=leverage
-                        # )
+                        # --- MARKET ENTRY ---
+                        trade = self.bot.rpc._rpc._rpc_force_entry(
+                            pair=event.symbol,
+                            price=None,
+                            order_type="market",
+                            order_side=order_side,
+                            stake_amount=stake_amount,
+                            enter_tag=f"telegram_{key}",
+                            leverage=leverage
+                        )
 
-                        # --- NEW LIMIT ENTRY LOGIC ---
-                        mid_price = None
-                        if event.entry_range and len(event.entry_range) == 2:
-                            mid_price = (event.entry_range[0] + event.entry_range[1]) / 2.0
-                        
-                        if mid_price:
-                            logger.info(f"Placing LIMIT entry order at middle of range {event.entry_range}: {mid_price}")
-                            trade = self.bot.rpc._rpc._rpc_force_entry(
-                                pair=event.symbol,
-                                price=mid_price,
-                                order_type="limit",
-                                order_side=order_side,
-                                stake_amount=stake_amount,
-                                enter_tag=f"telegram_{key}",
-                                leverage=leverage
-                            )
-                        else:
-                            logger.warning(f"No entry range found for {event.symbol}. Falling back to MARKET entry.")
-                            trade = self.bot.rpc._rpc._rpc_force_entry(
-                                pair=event.symbol,
-                                price=None,
-                                order_type="market",
-                                order_side=order_side,
-                                stake_amount=stake_amount,
-                                enter_tag=f"telegram_{key}",
-                                leverage=leverage
-                            )
+                        # --- LIMIT ENTRY LOGIC (disabled — limit orders did not fill in 3+ days) ---
+                        # mid_price = None
+                        # if event.entry_range and len(event.entry_range) == 2:
+                        #     mid_price = (event.entry_range[0] + event.entry_range[1]) / 2.0
+                        # 
+                        # if mid_price:
+                        #     logger.info(f"Placing LIMIT entry order at middle of range {event.entry_range}: {mid_price}")
+                        #     trade = self.bot.rpc._rpc._rpc_force_entry(
+                        #         pair=event.symbol,
+                        #         price=mid_price,
+                        #         order_type="limit",
+                        #         order_side=order_side,
+                        #         stake_amount=stake_amount,
+                        #         enter_tag=f"telegram_{key}",
+                        #         leverage=leverage
+                        #     )
+                        # else:
+                        #     logger.warning(f"No entry range found for {event.symbol}. Falling back to MARKET entry.")
+                        #     trade = self.bot.rpc._rpc._rpc_force_entry(
+                        #         pair=event.symbol,
+                        #         price=None,
+                        #         order_type="market",
+                        #         order_side=order_side,
+                        #         stake_amount=stake_amount,
+                        #         enter_tag=f"telegram_{key}",
+                        #         leverage=leverage
+                        #     )
                     if trade:
                         if not trade.get_custom_data("signal_id"):
                             trade.set_custom_data("signal_id", key)
@@ -365,15 +365,13 @@ class SignalWorker:
                         default_sl_pct = 0.025  # 2.5%
                         default_tp_pct = 0.035  # 3.5%
                         
-                        # --- WAIT FOR ENTRY FILL ---
-                        # Exchange API (BingX Futures) will reject TP/SL (reduce_only) if position is 0
-                        entry_orders = [o for o in trade.orders if o.ft_order_side == trade.entry_side]
-                        has_filled_entry = any(o.status in ('closed', 'canceled', 'cancelled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
-                        if not has_filled_entry and len(entry_orders) > 0:
-                            # Skip SL/TP processing until the limit entry gets at least partially filled
-                            logger.debug(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
-                            self.store.mark_status(key, "pending")
-                            return
+                        # --- WAIT FOR ENTRY FILL (only needed for limit orders, disabled) ---
+                        # entry_orders = [o for o in trade.orders if o.ft_order_side == trade.entry_side]
+                        # has_filled_entry = any(o.status in ('closed', 'canceled', 'cancelled') or (getattr(o, 'filled', 0) or 0) > 0 for o in entry_orders)
+                        # if not has_filled_entry and len(entry_orders) > 0:
+                        #     logger.debug(f"Entry limit order for {event.symbol} is open but not filled. Re-queueing signal {key} to wait for fill.")
+                        #     self.store.mark_status(key, "pending")
+                        #     return
 
                         # --- SL Handling ---
                         has_sl = any(o.ft_order_side == 'stoploss' and o.ft_is_open for o in trade.orders)
