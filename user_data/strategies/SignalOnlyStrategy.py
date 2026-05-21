@@ -31,8 +31,8 @@ class SignalOnlyStrategy(IStrategy):
 
     # Entry/Exit timeouts
     unfilledtimeout = {
-        'entry': 10,
-        'exit': 525600, # 365 days — TP orders must not be auto-cancelled
+        'entry': 60,
+        'exit': 1440,
         'exit_timeout_count': 0,
         'unit': 'minutes'
     }
