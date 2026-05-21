@@ -227,6 +227,37 @@ class SignalOnlyStrategy(IStrategy):
                     trade.close_profit = trade.calc_profit_ratio(actual_close_rate)
                     trade.close_profit_abs = trade.calc_profit(actual_close_rate)
                     
+                    # --- Cancel remaining open/pending orders on exchange for this symbol ---
+                    try:
+                        symbol_api = trade.pair.replace("/", "-").split(":")[0]
+                        # Fetch open limit orders
+                        open_ord = api.fetch_open_orders(trade.pair)
+                        # Fetch pending trigger orders
+                        pending_ord = []
+                        raw_method = getattr(api, 'swapV2PrivateGetTradePendingOrders', None)
+                        if raw_method:
+                            resp = raw_method({"symbol": symbol_api})
+                            if isinstance(resp, dict) and 'data' in resp:
+                                pending_ord = resp['data']
+                        
+                        all_ords = open_ord + pending_ord
+                        for o in all_ords:
+                            o_id = o.get('id') or o.get('orderId')
+                            if o_id:
+                                logger.info(f"BINGX RECONCILE: Cancelling remaining order {o_id} for {trade.pair} since position is closed.")
+                                try:
+                                    api.cancel_order(str(o_id), trade.pair)
+                                except Exception as e_cancel:
+                                    logger.warning(f"BINGX RECONCILE: Failed to cancel order {o_id}: {e_cancel}")
+                    except Exception as e_clean:
+                        logger.warning(f"BINGX RECONCILE: Failed to clean up remaining orders for {trade.pair}: {e_clean}")
+                    
+                    # Mark all open orders for this trade as closed in DB
+                    for o in trade.orders:
+                        if o.ft_is_open:
+                            o.ft_is_open = False
+                            o.status = "canceled"
+                    
                     # Force commit to DB
                     from freqtrade.persistence import Trade
                     Trade.session.add(trade)
