@@ -32,7 +32,7 @@ class SignalOnlyStrategy(IStrategy):
     # Entry/Exit timeouts
     unfilledtimeout = {
         'entry': 60,
-        'exit': 1440,
+        'exit': 525600,
         'exit_timeout_count': 0,
         'unit': 'minutes'
     }
