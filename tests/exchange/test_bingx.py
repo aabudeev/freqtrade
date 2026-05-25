@@ -150,6 +150,86 @@ def test_bingx_spot_mode_skips_futures_pair_validation():
     ex._validate_bingx_futures_pair_symbols(cfg)
 
 
+def test_bingx_swap_trade_min_quantity_from_market_info():
+    market = {"info": {"tradeMinQuantity": "0.05", "minQty": "1"}}
+    assert bingx.Bingx._bingx_swap_trade_min_quantity(market) == 0.05
+
+
+def test_bingx_trades_contracts_to_amount_scales_qty_only_fills():
+    ex = _bingx_futures_stub()
+    ex.markets = {
+        "DOGE/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": "0.05"},
+        }
+    }
+    trades = [
+        {
+            "symbol": "DOGE/USDT:USDT",
+            "amount": 70480.0,
+            "info": {"qty": "70480"},
+        }
+    ]
+    out = ex._trades_contracts_to_amount(trades)
+    assert out[0]["amount"] == 3524.0
+
+
+def test_bingx_trades_contracts_to_amount_skips_volume_parsed_fills():
+    ex = _bingx_futures_stub()
+    ex.markets = {
+        "SOL/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": "35"},
+        }
+    }
+    trades = [
+        {
+            "symbol": "SOL/USDT:USDT",
+            "amount": 4.19,
+            "info": {"volume": "0.12", "qty": "0.12"},
+        }
+    ]
+    out = ex._trades_contracts_to_amount(trades)
+    assert out[0]["amount"] == 4.19
+
+
+def test_bingx_trades_contracts_to_amount_sol_qty_matches_stake_math():
+    """Regression: log showed 0.12 exchange qty vs 4.19 trade.amount (~35x step)."""
+    ex = _bingx_futures_stub()
+    ex.markets = {
+        "SOL/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": str(4.19 / 0.12)},
+        }
+    }
+    trades = [{"symbol": "SOL/USDT:USDT", "amount": 0.12, "info": {"qty": "0.12"}}]
+    out = ex._trades_contracts_to_amount(trades)
+    assert abs(out[0]["amount"] - 4.19) < 0.02
+
+
+def test_bingx_order_contracts_to_amount_passthrough_swap_orders():
+    ex = _bingx_futures_stub()
+    ex.markets = {
+        "DOGE/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": "0.05"},
+        }
+    }
+    order = {
+        "symbol": "DOGE/USDT:USDT",
+        "amount": 3524.0,
+        "filled": 3524.0,
+        "remaining": 0.0,
+    }
+    out = ex._order_contracts_to_amount(order)
+    assert out["filled"] == 3524.0
+    assert out["amount"] == 3524.0
+
+
 @pytest.mark.usefixtures("init_persistence")
 def test_bingx_get_params_adds_hedged_when_hedge_mode(mocker, default_conf_usdt):
     default_conf_usdt["trading_mode"] = "futures"

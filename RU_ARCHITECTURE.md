@@ -286,10 +286,11 @@ order.ft_order_side = self.exit_side
   ```
 - Формула: `ликвидация ± 3%` буфер
 
-### 3. Предупреждения о несовпадении объёма
-- BingX иногда возвращает агрегированные объёмы с небольшим отклонением
-- `WARNING: Amount X does not match amount Y` — безопасно игнорировать
-- Не влияет на закрытие сделки или расчёт прибыли
+### 3. Предупреждения о несовпадении объёма (BingX swap)
+- CCXT для BingX swap задаёт `contractSize=1`, а `fetch_my_trades` для части fills отдаёт `qty` в шагах контракта (`tradeMinQuantity` из `market.info`), не в монетах.
+- Симптом: `WARNING: Amount X does not match amount Y` (например SOL `0.12` vs `4.19`, DOGE `70480` vs `3524`).
+- **Исправление (fork):** `freqtrade/exchange/bingx.py` — `_trades_contracts_to_amount` масштабирует qty-only fills; `_order_contracts_to_amount` не трогает `origQty`/`executedQty` (они уже в base).
+- После фикса fee-sync и `close_profit` должны совпадать с биржей; предупреждение не игнорировать.
 
 ### 4. Модель потоков
 - `SignalWorker` работает в отдельном потоке от основного цикла `FreqtradeBot`

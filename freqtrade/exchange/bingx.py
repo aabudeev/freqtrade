@@ -106,6 +106,83 @@ class Bingx(Exchange):
                 f"Use pairs ending with :{stake} in exchange.{list_name}."
             )
 
+    @staticmethod
+    def _bingx_swap_trade_min_quantity(market: dict) -> float:
+        """
+        Per-market qty step from BingX contract metadata.
+
+        CCXT ``parse_market`` hardcodes ``contractSize=1`` for BingX swaps while
+        ``parse_trade`` uses ``info.tradeMinQuantity`` when ``volume`` is present.
+        Private fills that only expose ``qty`` must be scaled by the same factor.
+        """
+        info = market.get("info") if market else None
+        if not isinstance(info, dict):
+            return 1.0
+        for key in ("tradeMinQuantity", "minQty"):
+            raw = info.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 1.0
+
+    def _bingx_swap_fill_amount_multiplier(self, pair: str) -> float:
+        if self.trading_mode != TradingMode.FUTURES:
+            return 1.0
+        market = self.markets.get(pair) or {}
+        if not market.get("contract"):
+            return 1.0
+        return self._bingx_swap_trade_min_quantity(market)
+
+    @staticmethod
+    def _bingx_swap_fill_already_in_base(trade: dict) -> bool:
+        """True when CCXT ``parse_trade`` already applied volume * tradeMinQuantity."""
+        info = trade.get("info")
+        return isinstance(info, dict) and "volume" in info
+
+    def _trades_contracts_to_amount(self, trades: list) -> list:
+        """
+        BingX swap: ``fetch_my_trades`` / order-trade rows often report ``qty`` in exchange
+        contract units, while Freqtrade ``trade.amount`` and market orders use base coin.
+
+        Do not change ``get_contract_size`` / ``_amount_to_contracts`` — that would break
+        ``create_order`` sizing (BingX accepts base qty with CCXT ``contractSize=1``).
+        """
+        if not trades or "symbol" not in trades[0]:
+            return trades
+        pair = trades[0]["symbol"]
+        multiplier = self._bingx_swap_fill_amount_multiplier(pair)
+        if multiplier == 1.0:
+            return trades
+        for trade in trades:
+            if self._bingx_swap_fill_already_in_base(trade):
+                continue
+            amount = trade.get("amount")
+            if amount is not None:
+                trade["amount"] = float(amount) * multiplier
+        return trades
+
+    def _order_contracts_to_amount(self, order: CcxtOrder) -> CcxtOrder:
+        """
+        BingX swap order dicts (``origQty`` / ``executedQty``) are already in base currency.
+
+        CCXT sets ``contractSize=1``; applying the parent multiplier would corrupt
+        ``filled`` / ``amount`` used for ``trade.amount`` and close-profit recalculation.
+        """
+        if self.trading_mode != TradingMode.FUTURES:
+            return super()._order_contracts_to_amount(order)
+        symbol = order.get("symbol")
+        if not symbol:
+            return order
+        market = self.markets.get(symbol) or {}
+        if not market.get("contract"):
+            return super()._order_contracts_to_amount(order)
+        return order
+
     def create_order(
         self,
         *,

@@ -286,10 +286,11 @@ order.ft_order_side = self.exit_side
   ```
 - Formula: `liquidation ± 3%` buffer
 
-### 3. Amount Mismatch Warnings
-- BingX sometimes returns aggregate amounts that differ slightly
-- `WARNING: Amount X does not match amount Y` — safe to ignore
-- Does not affect trade closure or profit calculation
+### 3. Amount Mismatch Warnings (BingX swap)
+- CCXT sets `contractSize=1` for BingX swaps while some `fetch_my_trades` fills use contract-step `qty` (`tradeMinQuantity` in `market.info`), not base coin amount.
+- Symptom: `WARNING: Amount X does not match amount Y` (e.g. SOL `0.12` vs `4.19`, DOGE `70480` vs `3524`).
+- **Fork fix:** `freqtrade/exchange/bingx.py` — `_trades_contracts_to_amount` scales qty-only fills; `_order_contracts_to_amount` leaves `origQty`/`executedQty` unchanged (already base units).
+- After the fix, fee sync and `close_profit` should align with the exchange; do not ignore the warning.
 
 ### 4. Threading Model
 - `SignalWorker` runs in a separate thread from `FreqtradeBot` main loop
