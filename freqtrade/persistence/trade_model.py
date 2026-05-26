@@ -1299,7 +1299,7 @@ class LocalTrade:
         if close_profit:
             self.close_profit = close_profit
             self.realized_profit = close_profit_abs
-            self.close_profit_abs = prof.profit_abs
+            self.close_profit_abs = close_profit_abs
 
         current_amount_tr = amount_to_contract_precision(
             float(current_amount), self.amount_precision, self.precision_mode, self.contract_size

@@ -210,7 +210,7 @@ def test_bingx_trades_contracts_to_amount_sol_qty_matches_stake_math():
     assert abs(out[0]["amount"] - 4.19) < 0.02
 
 
-def test_bingx_order_contracts_to_amount_passthrough_swap_orders():
+def test_bingx_order_contracts_to_amount_leaves_base_swap_orders():
     ex = _bingx_futures_stub()
     ex.markets = {
         "DOGE/USDT:USDT": {
@@ -224,10 +224,45 @@ def test_bingx_order_contracts_to_amount_passthrough_swap_orders():
         "amount": 3524.0,
         "filled": 3524.0,
         "remaining": 0.0,
+        "average": 0.1,
+        "cost": 352.4,
     }
     out = ex._order_contracts_to_amount(order)
     assert out["filled"] == 3524.0
     assert out["amount"] == 3524.0
+
+
+def test_bingx_order_contracts_to_amount_scales_contract_filled_sol_tp():
+    """TP close: filled in contract steps, cost in USDT (SOL 0.12 vs 4.19 base)."""
+    ex = _bingx_futures_stub()
+    mult = 4.19 / 0.12
+    ex.markets = {
+        "SOL/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": str(mult)},
+        }
+    }
+    order = {
+        "symbol": "SOL/USDT:USDT",
+        "amount": 4.19,
+        "filled": 0.12,
+        "remaining": 0.0,
+        "average": 85.04,
+        "cost": 356.31,
+        "info": {"qty": "0.12"},
+    }
+    out = ex._order_contracts_to_amount(order)
+    assert abs(out["filled"] - 4.19) < 0.02
+    assert abs(out["amount"] - 4.19) < 0.02
+
+
+def test_bingx_swap_order_amounts_are_contract_units_cost_heuristic():
+    mult = 35.0
+    order = {"filled": 0.12, "average": 85.04, "cost": 356.31, "amount": 4.19}
+    assert bingx.Bingx._bingx_swap_order_amounts_are_contract_units(order, mult)
+    base_order = {"filled": 4.19, "average": 85.04, "cost": 356.31, "amount": 4.19}
+    assert not bingx.Bingx._bingx_swap_order_amounts_are_contract_units(base_order, mult)
 
 
 @pytest.mark.usefixtures("init_persistence")

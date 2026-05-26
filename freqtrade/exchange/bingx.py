@@ -144,6 +144,39 @@ class Bingx(Exchange):
         info = trade.get("info")
         return isinstance(info, dict) and "volume" in info
 
+    @staticmethod
+    def _bingx_swap_order_amounts_are_contract_units(order: dict, multiplier: float) -> bool:
+        """
+        Detect swap orders whose ``filled`` is still in contract steps (e.g. SOL 0.12 vs 4.19).
+
+        BingX ``cost`` is usually correct in USDT while CCXT ``filled`` may stay in contract qty.
+        """
+        if multiplier <= 1.0:
+            return False
+        filled = float(order.get("filled") or 0)
+        if filled <= 0:
+            return False
+        price = float(order.get("average") or order.get("price") or 0)
+        cost = order.get("cost")
+        amount = float(order.get("amount") or 0)
+        if amount > 0 and filled < amount * 0.5:
+            return True
+        if not price or not cost:
+            return False
+        cost_f = float(cost)
+        if cost_f <= 0:
+            return False
+        base_err = abs(cost_f - filled * price) / cost_f
+        scaled_err = abs(cost_f - filled * multiplier * price) / cost_f
+        return scaled_err < 0.05 and base_err > 0.05
+
+    def _bingx_scale_swap_order_to_base(self, order: CcxtOrder, multiplier: float) -> CcxtOrder:
+        for prop in ("amount", "filled", "remaining"):
+            val = order.get(prop)
+            if val is not None:
+                order[prop] = float(val) * multiplier
+        return order
+
     def _trades_contracts_to_amount(self, trades: list) -> list:
         """
         BingX swap: ``fetch_my_trades`` / order-trade rows often report ``qty`` in exchange
@@ -168,10 +201,11 @@ class Bingx(Exchange):
 
     def _order_contracts_to_amount(self, order: CcxtOrder) -> CcxtOrder:
         """
-        BingX swap order dicts (``origQty`` / ``executedQty``) are already in base currency.
+        BingX swap: scale ``filled`` / ``amount`` when CCXT leaves them in contract steps.
 
-        CCXT sets ``contractSize=1``; applying the parent multiplier would corrupt
-        ``filled`` / ``amount`` used for ``trade.amount`` and close-profit recalculation.
+        Market entries are often already in base coin; TP/exit fetches may still report
+        ``executedQty`` in contract units (e.g. SOL ``0.12`` vs ``4.19``), which breaks
+        ``recalc_trade_from_orders`` and flips short PnL sign in the UI.
         """
         if self.trading_mode != TradingMode.FUTURES:
             return super()._order_contracts_to_amount(order)
@@ -181,6 +215,13 @@ class Bingx(Exchange):
         market = self.markets.get(symbol) or {}
         if not market.get("contract"):
             return super()._order_contracts_to_amount(order)
+        multiplier = self._bingx_swap_fill_amount_multiplier(symbol)
+        if multiplier <= 1.0:
+            return order
+        if self._bingx_swap_fill_already_in_base(order):
+            return order
+        if self._bingx_swap_order_amounts_are_contract_units(order, multiplier):
+            return self._bingx_scale_swap_order_to_base(order, multiplier)
         return order
 
     def create_order(

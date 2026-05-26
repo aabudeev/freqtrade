@@ -134,6 +134,12 @@ class SignalOnlyStrategy(IStrategy):
             except Exception as e_repair:
                 logger.debug(f"BINGX RECONCILE: Repair failed (ignoring): {e_repair}")
                 Trade.session.rollback()
+
+            # Fix closed trades where PnL sign disagrees with open/close rates (BingX qty mismatch)
+            try:
+                self._bingx_repair_closed_trade_profits()
+            except Exception as e_pnl:
+                logger.debug(f"BINGX RECONCILE: Closed-trade PnL repair skipped: {e_pnl}")
             
             # 1. Get all open trades from DB
             open_trades = Trade.get_open_trades()
@@ -158,6 +164,10 @@ class SignalOnlyStrategy(IStrategy):
             logger.info(f"BINGX RECONCILE: Active positions on exchange: {pos_symbols}")
 
             for trade in open_trades:
+                if self._bingx_rescale_contract_order_fills(trade):
+                    trade.recalc_trade_from_orders()
+                    Trade.commit()
+
                 # --- SAFETY: Skip trades younger than 10 minutes ---
                 trade_age_seconds = (datetime.now(timezone.utc) - trade.open_date_utc).total_seconds() if trade.open_date_utc else 0
                 if trade_age_seconds < 600:
@@ -219,13 +229,15 @@ class SignalOnlyStrategy(IStrategy):
                         actual_close_rate = trade.open_rate
                         logger.warning(f"BINGX RECONCILE: Using open_rate as last resort for {trade.pair} — statistics may be inaccurate!")
                     
-                    # Update trade object with real price
+                    trade.close_rate = actual_close_rate
                     trade.close_date = datetime.now(timezone.utc)
                     trade.is_open = False
                     trade.exit_reason = "reconciled_missing_position"
-                    trade.close_rate = actual_close_rate
-                    trade.close_profit = trade.calc_profit_ratio(actual_close_rate)
-                    trade.close_profit_abs = trade.calc_profit(actual_close_rate)
+                    trade.recalc_trade_from_orders(is_closing=True)
+                    expected_ratio = trade.calc_profit_ratio(actual_close_rate)
+                    if trade.close_profit is None or trade.close_profit * expected_ratio < 0:
+                        trade.close_profit = expected_ratio
+                        trade.close_profit_abs = trade.calc_profit(actual_close_rate)
                     
                     # --- Cancel remaining open/pending orders on exchange for this symbol ---
                     try:
@@ -446,6 +458,77 @@ class SignalOnlyStrategy(IStrategy):
 
         except Exception as e:
             logger.error(f"BINGX RECONCILE: Global error: {e}")
+
+    def _bingx_swap_qty_multiplier(self, pair: str) -> float:
+        if not (self.dp and getattr(self.dp, "_exchange", None)):
+            return 1.0
+        ex = self.dp._exchange
+        if ex.id.lower() != "bingx":
+            return 1.0
+        market = ex.markets.get(pair) or {}
+        if not market.get("contract"):
+            return 1.0
+        from freqtrade.exchange.bingx import Bingx
+
+        return Bingx._bingx_swap_trade_min_quantity(market)
+
+    def _bingx_rescale_contract_order_fills(self, trade: Trade) -> bool:
+        """Fix Order.filled/amount persisted in contract steps (e.g. SOL 0.12 vs 4.19)."""
+        mult = self._bingx_swap_qty_multiplier(trade.pair)
+        if mult <= 1.0:
+            return False
+        changed = False
+        ref_amount = float(trade.amount or 0)
+        for order in trade.orders:
+            filled = float(order.filled or 0)
+            amount = float(order.amount or order.ft_amount or 0)
+            if filled <= 0:
+                continue
+            probe = {
+                "filled": filled,
+                "amount": amount or ref_amount,
+                "average": order.average or order.price or trade.close_rate or trade.open_rate,
+                "cost": order.cost,
+            }
+            from freqtrade.exchange.bingx import Bingx
+
+            if not Bingx._bingx_swap_order_amounts_are_contract_units(probe, mult):
+                continue
+            order.filled = filled * mult
+            if amount > 0:
+                order.amount = amount * mult
+            if order.remaining:
+                order.remaining = float(order.remaining) * mult
+            changed = True
+        return changed
+
+    def _bingx_repair_closed_trade_profits(self) -> None:
+        """Recalc or fix close_profit when exit fills were stored in contract units."""
+        from freqtrade.persistence import Trade
+
+        repaired = 0
+        for trade in Trade.get_trades([Trade.is_open.is_(False)]).all():
+            if trade.close_rate is None or trade.open_rate is None or trade.close_profit is None:
+                continue
+            expected_ratio = trade.calc_profit_ratio(trade.close_rate)
+            if trade.close_profit * expected_ratio >= 0:
+                continue
+            logger.warning(
+                f"BINGX RECONCILE: Repairing inverted PnL on trade {trade.id} ({trade.pair}): "
+                f"stored={trade.close_profit:.4f}, expected={expected_ratio:.4f}"
+            )
+            if self._bingx_rescale_contract_order_fills(trade):
+                logger.info(
+                    f"BINGX RECONCILE: Rescaled contract-step fills on trade {trade.id} orders."
+                )
+            trade.recalc_trade_from_orders(is_closing=True)
+            if trade.close_profit is None or trade.close_profit * expected_ratio < 0:
+                trade.close_profit = expected_ratio
+                trade.close_profit_abs = trade.calc_profit(trade.close_rate)
+            repaired += 1
+        if repaired:
+            Trade.commit()
+            logger.info(f"BINGX RECONCILE: Repaired PnL on {repaired} closed trade(s).")
 
     def _register_order(self, trade: Trade, order_id: str, side: str, price: float) -> None:
         from freqtrade.persistence import Order, Trade
