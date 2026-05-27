@@ -164,8 +164,13 @@ class SignalOnlyStrategy(IStrategy):
             logger.info(f"BINGX RECONCILE: Active positions on exchange: {pos_symbols}")
 
             for trade in open_trades:
+                changed = False
                 if self._bingx_rescale_contract_order_fills(trade):
                     trade.recalc_trade_from_orders()
+                    changed = True
+                if self._bingx_repair_open_trade_value(trade):
+                    changed = True
+                if changed:
                     Trade.commit()
 
                 # --- SAFETY: Skip trades younger than 10 minutes ---
@@ -501,6 +506,24 @@ class SignalOnlyStrategy(IStrategy):
                 order.remaining = float(order.remaining) * mult
             changed = True
         return changed
+
+    def _bingx_repair_open_trade_value(self, trade: Trade) -> bool:
+        """Fix stale open_trade_value that inflates unrealized PnL (e.g. SOL -77% vs -11%)."""
+        if not trade.is_open or not trade.amount or not trade.open_rate:
+            return False
+        expected = trade._calc_open_trade_value(trade.amount, trade.open_rate)
+        if not trade.open_trade_value:
+            trade.recalc_open_trade_value()
+            return True
+        err = abs(trade.open_trade_value - expected) / expected
+        if err > 0.02:
+            logger.warning(
+                f"BINGX RECONCILE: Repairing open_trade_value on trade {trade.id} ({trade.pair}): "
+                f"{trade.open_trade_value:.4f} -> {expected:.4f}"
+            )
+            trade.recalc_open_trade_value()
+            return True
+        return False
 
     def _bingx_repair_closed_trade_profits(self) -> None:
         """Recalc or fix close_profit when exit fills were stored in contract units."""

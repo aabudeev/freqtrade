@@ -265,7 +265,31 @@ def test_bingx_swap_order_amounts_are_contract_units_cost_heuristic():
     assert not bingx.Bingx._bingx_swap_order_amounts_are_contract_units(base_order, mult)
 
 
-@pytest.mark.usefixtures("init_persistence")
+def test_bingx_order_contracts_to_amount_scales_embedded_trades():
+    """Entry fee sync: order.filled in base but order.trades qty still in contract steps."""
+    ex = _bingx_futures_stub()
+    mult = 4.3 / 0.12
+    ex.markets = {
+        "SOL/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": str(mult)},
+        }
+    }
+    order = {
+        "symbol": "SOL/USDT:USDT",
+        "amount": 4.3,
+        "filled": 4.3,
+        "remaining": 0.0,
+        "average": 83.661,
+        "cost": 359.74,
+        "trades": [{"symbol": "SOL/USDT:USDT", "amount": 0.12, "cost": 359.74, "info": {"qty": "0.12"}}],
+    }
+    out = ex._order_contracts_to_amount(order)
+    assert abs(out["trades"][0]["amount"] - 4.3) < 0.02
+    assert out["filled"] == 4.3
+
+
 def test_bingx_get_params_adds_hedged_when_hedge_mode(mocker, default_conf_usdt):
     default_conf_usdt["trading_mode"] = "futures"
     default_conf_usdt["margin_mode"] = "isolated"

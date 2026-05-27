@@ -221,7 +221,10 @@ class Bingx(Exchange):
         if self._bingx_swap_fill_already_in_base(order):
             return order
         if self._bingx_swap_order_amounts_are_contract_units(order, multiplier):
-            return self._bingx_scale_swap_order_to_base(order, multiplier)
+            order = self._bingx_scale_swap_order_to_base(order, multiplier)
+        embedded = order.get("trades")
+        if embedded:
+            order["trades"] = self._trades_contracts_to_amount(embedded)
         return order
 
     def create_order(
