@@ -558,6 +558,23 @@ class SignalOnlyStrategy(IStrategy):
                         f"BINGX RECONCILE: Repairing PnL drift on trade {trade.id} ({trade.pair}): "
                         f"model={model_ratio:.4f}, price_only={price_only_ratio:.4f}"
                     )
+                    # Some legacy trades got corrupted fee rates (e.g. 2-4% instead of 0.05%).
+                    # That alone can keep unrealized PnL permanently distorted.
+                    sane_fee = 0.0005
+                    if self.dp and getattr(self.dp, "_exchange", None):
+                        try:
+                            sane_fee = float(
+                                self.dp._exchange.get_fee(symbol=trade.pair, taker_or_maker="maker")
+                            )
+                        except Exception:
+                            sane_fee = 0.0005
+                    if (trade.fee_open or 0.0) > 0.01 or (trade.fee_close or 0.0) > 0.01:
+                        logger.warning(
+                            f"BINGX RECONCILE: Reset abnormal fees on trade {trade.id} ({trade.pair}): "
+                            f"open={trade.fee_open}, close={trade.fee_close} -> {sane_fee}"
+                        )
+                        trade.fee_open = sane_fee
+                        trade.fee_close = sane_fee
                     for order in trade.orders:
                         if order.funding_fee:
                             order.funding_fee = 0.0
