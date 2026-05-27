@@ -511,19 +511,31 @@ class SignalOnlyStrategy(IStrategy):
         """Fix stale open_trade_value that inflates unrealized PnL (e.g. SOL -77% vs -11%)."""
         if not trade.is_open or not trade.amount or not trade.open_rate:
             return False
+        changed = False
         expected = trade._calc_open_trade_value(trade.amount, trade.open_rate)
         if not trade.open_trade_value:
             trade.recalc_open_trade_value()
-            return True
-        err = abs(trade.open_trade_value - expected) / expected
+            changed = True
+        err = abs((trade.open_trade_value or 0.0) - expected) / expected
         if err > 0.02:
             logger.warning(
                 f"BINGX RECONCILE: Repairing open_trade_value on trade {trade.id} ({trade.pair}): "
                 f"{trade.open_trade_value:.4f} -> {expected:.4f}"
             )
             trade.recalc_open_trade_value()
-            return True
-        return False
+            changed = True
+        # BingX reports realized funding separately from unrealized PnL.
+        # If stale/overblown funding remains attached to an open trade, UI PnL is inflated.
+        funding = float(trade.funding_fees or 0.0)
+        max_reasonable = float(trade.stake_amount or 0.0) * 0.20
+        if abs(funding) > max_reasonable > 0:
+            logger.warning(
+                f"BINGX RECONCILE: Reset abnormal funding_fees on trade {trade.id} ({trade.pair}): "
+                f"{funding:.4f} -> 0.0"
+            )
+            trade.funding_fees = 0.0
+            changed = True
+        return changed
 
     def _bingx_repair_closed_trade_profits(self) -> None:
         """Recalc or fix close_profit when exit fills were stored in contract units."""
