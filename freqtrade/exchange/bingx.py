@@ -258,6 +258,18 @@ class Bingx(Exchange):
             initial_order=initial_order,
         )
 
+    def get_funding_fees(
+        self, pair: str, amount: float, is_short: bool, open_date
+    ) -> float:
+        """
+        BingX funding endpoint/aggregation is unreliable for this fork's per-trade PnL model.
+
+        Returning stale cumulative values causes unrealized PnL distortions (e.g. SOL -66%
+        while price-only short math is near flat). Keep funding neutral until a position-
+        scoped funding source is implemented.
+        """
+        return 0.0
+
     def ft_additional_exchange_init(self) -> None:
         self._api.verbose = False
         self._api_async.verbose = False

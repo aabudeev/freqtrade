@@ -265,6 +265,11 @@ def test_bingx_swap_order_amounts_are_contract_units_cost_heuristic():
     assert not bingx.Bingx._bingx_swap_order_amounts_are_contract_units(base_order, mult)
 
 
+def test_bingx_get_funding_fees_returns_zero_for_fork():
+    ex = _bingx_futures_stub()
+    assert ex.get_funding_fees("SOL/USDT:USDT", 4.3, True, None) == 0.0
+
+
 def test_bingx_order_contracts_to_amount_scales_embedded_trades():
     """Entry fee sync: order.filled in base but order.trades qty still in contract steps."""
     ex = _bingx_futures_stub()
