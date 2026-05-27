@@ -535,6 +535,24 @@ class SignalOnlyStrategy(IStrategy):
             )
             trade.funding_fees = 0.0
             changed = True
+        # Safety net: if live PnL is far from price-only expectation, force-reset stale components.
+        try:
+            current_rate = self.dp._exchange.get_rate(
+                trade.pair, side="exit", is_short=trade.is_short, refresh=False
+            )
+            if current_rate and trade.open_rate:
+                price_only_ratio = ((1 - (current_rate / trade.open_rate)) * trade.leverage)
+                model_ratio = trade.calc_profit_ratio(current_rate)
+                if abs(model_ratio - price_only_ratio) > 0.25:
+                    logger.warning(
+                        f"BINGX RECONCILE: Repairing PnL drift on trade {trade.id} ({trade.pair}): "
+                        f"model={model_ratio:.4f}, price_only={price_only_ratio:.4f}"
+                    )
+                    trade.funding_fees = 0.0
+                    trade.recalc_open_trade_value()
+                    changed = True
+        except Exception:
+            pass
         return changed
 
     def _bingx_repair_closed_trade_profits(self) -> None:
