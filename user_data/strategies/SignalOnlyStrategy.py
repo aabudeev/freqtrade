@@ -535,6 +535,16 @@ class SignalOnlyStrategy(IStrategy):
             )
             trade.funding_fees = 0.0
             changed = True
+        # Funding can be reintroduced from persisted order.funding_fee during recalculation.
+        for order in trade.orders:
+            ofee = float(order.funding_fee or 0.0)
+            if abs(ofee) > max_reasonable > 0:
+                logger.warning(
+                    f"BINGX RECONCILE: Reset abnormal order funding on trade {trade.id} "
+                    f"order {order.order_id}: {ofee:.4f} -> 0.0"
+                )
+                order.funding_fee = 0.0
+                changed = True
         # Safety net: if live PnL is far from price-only expectation, force-reset stale components.
         try:
             current_rate = self.dp._exchange.get_rate(
@@ -548,7 +558,11 @@ class SignalOnlyStrategy(IStrategy):
                         f"BINGX RECONCILE: Repairing PnL drift on trade {trade.id} ({trade.pair}): "
                         f"model={model_ratio:.4f}, price_only={price_only_ratio:.4f}"
                     )
+                    for order in trade.orders:
+                        if order.funding_fee:
+                            order.funding_fee = 0.0
                     trade.funding_fees = 0.0
+                    trade.funding_fee_running = 0.0
                     trade.recalc_open_trade_value()
                     changed = True
         except Exception:
