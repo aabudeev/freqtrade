@@ -145,12 +145,36 @@ class Bingx(Exchange):
         return isinstance(info, dict) and "volume" in info
 
     @staticmethod
+    def _bingx_swap_fill_scale_factor(order: dict) -> float:
+        """
+        Convert BingX swap ``filled`` to base coin using USDT ``cost`` (reliable).
+
+        ETC entry log: filled=1125.25, cost≈45*7.971 → scale≈0.04.
+        AXS: filled=624, cost≈312*1.154 → scale≈0.5.
+        """
+        filled = float(order.get("filled") or 0)
+        if filled <= 0:
+            return 1.0
+        price = float(order.get("average") or order.get("price") or 0)
+        cost = float(order.get("cost") or 0)
+        if price <= 0 or cost <= 0:
+            return 1.0
+        implied_base = cost / price
+        if implied_base <= 0:
+            return 1.0
+        if filled <= implied_base * 1.02:
+            return 1.0
+        return implied_base / filled
+
+    @staticmethod
     def _bingx_swap_order_amounts_are_contract_units(order: dict, multiplier: float) -> bool:
         """
         Detect swap orders whose ``filled`` is still in contract steps (e.g. SOL 0.12 vs 4.19).
 
         BingX ``cost`` is usually correct in USDT while CCXT ``filled`` may stay in contract qty.
         """
+        if Bingx._bingx_swap_fill_scale_factor(order) != 1.0:
+            return True
         if multiplier <= 1.0:
             return False
         filled = float(order.get("filled") or 0)
@@ -170,11 +194,11 @@ class Bingx(Exchange):
         scaled_err = abs(cost_f - filled * multiplier * price) / cost_f
         return scaled_err < 0.05 and base_err > 0.05
 
-    def _bingx_scale_swap_order_to_base(self, order: CcxtOrder, multiplier: float) -> CcxtOrder:
+    def _bingx_scale_swap_order_to_base(self, order: CcxtOrder, scale_factor: float) -> CcxtOrder:
         for prop in ("amount", "filled", "remaining"):
             val = order.get(prop)
             if val is not None:
-                order[prop] = float(val) * multiplier
+                order[prop] = float(val) * scale_factor
         return order
 
     def _trades_contracts_to_amount(self, trades: list) -> list:
@@ -215,16 +239,26 @@ class Bingx(Exchange):
         market = self.markets.get(symbol) or {}
         if not market.get("contract"):
             return super()._order_contracts_to_amount(order)
-        multiplier = self._bingx_swap_fill_amount_multiplier(symbol)
-        if multiplier <= 1.0:
-            return order
-        if self._bingx_swap_fill_already_in_base(order):
-            return order
-        if self._bingx_swap_order_amounts_are_contract_units(order, multiplier):
-            order = self._bingx_scale_swap_order_to_base(order, multiplier)
+        scale = self._bingx_swap_fill_scale_factor(order)
+        if scale != 1.0:
+            order = self._bingx_scale_swap_order_to_base(order, scale)
+        else:
+            multiplier = self._bingx_swap_fill_amount_multiplier(symbol)
+            if multiplier > 1.0 and self._bingx_swap_order_amounts_are_contract_units(
+                order, multiplier
+            ):
+                order = self._bingx_scale_swap_order_to_base(order, multiplier)
         embedded = order.get("trades")
         if embedded:
             order["trades"] = self._trades_contracts_to_amount(embedded)
+            # Entry fills: main order already in base but embedded qty still in contract steps
+            if scale == 1.0:
+                for tr in order["trades"]:
+                    tr_scale = self._bingx_swap_fill_scale_factor(tr)
+                    if tr_scale != 1.0:
+                        amt = tr.get("amount")
+                        if amt is not None:
+                            tr["amount"] = float(amt) * tr_scale
         return order
 
     def create_order(

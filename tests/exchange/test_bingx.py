@@ -257,6 +257,41 @@ def test_bingx_order_contracts_to_amount_scales_contract_filled_sol_tp():
     assert abs(out["amount"] - 4.19) < 0.02
 
 
+def test_bingx_swap_fill_scale_factor_etc_entry():
+    """Log: Amount 1125.25 does not match 45.01 on ETC entry."""
+    order = {"filled": 1125.25, "average": 7.971, "cost": 45.01 * 7.971}
+    scale = bingx.Bingx._bingx_swap_fill_scale_factor(order)
+    assert abs(scale - (45.01 / 1125.25)) < 0.01
+
+
+def test_bingx_swap_fill_scale_factor_axs_entry():
+    """Log: Amount 624 does not match 312 on AXS entry."""
+    order = {"filled": 624.0, "average": 1.154, "cost": 312.0 * 1.154}
+    scale = bingx.Bingx._bingx_swap_fill_scale_factor(order)
+    assert abs(scale - 0.5) < 0.01
+
+
+def test_bingx_order_contracts_to_amount_scales_etc_entry_fill():
+    ex = _bingx_futures_stub()
+    ex.markets = {
+        "ETC/USDT:USDT": {
+            "contract": True,
+            "contractSize": 1,
+            "info": {"tradeMinQuantity": "1"},
+        }
+    }
+    order = {
+        "symbol": "ETC/USDT:USDT",
+        "amount": 1125.25,
+        "filled": 1125.25,
+        "remaining": 0.0,
+        "average": 7.971,
+        "cost": 45.01 * 7.971,
+    }
+    out = ex._order_contracts_to_amount(order)
+    assert abs(out["filled"] - 45.01) < 0.1
+
+
 def test_bingx_swap_order_amounts_are_contract_units_cost_heuristic():
     mult = 35.0
     order = {"filled": 0.12, "average": 85.04, "cost": 356.31, "amount": 4.19}

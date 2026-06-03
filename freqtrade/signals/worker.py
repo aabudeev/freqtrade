@@ -507,13 +507,7 @@ class SignalWorker:
                     from freqtrade.persistence import Trade
                     trade = Trade.get_trades([Trade.is_open.is_(True), Trade.pair == event.symbol]).first()
                     if trade:
-                        try:
-                            self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
-                        except Exception as e:
-                            logger.warning(f"Note: _rpc_force_exit raised an exception (often safe to ignore if trade actually closed): {e}")
-                        
-                        self.store.mark_status(key, "active")
-                        logger.info(f"Exit sent for trade {trade.id}.")
+                        self._handle_signal_exit(trade, event.type, key)
                     else:
                         self.store.mark_status(key, "skipped", "No open trade")
             else:
@@ -523,6 +517,81 @@ class SignalWorker:
             if not is_emergency:
                 raise e
 
+    def _handle_signal_exit(self, trade, signal_type: SignalType, key: str) -> None:
+        """
+        TAKE_PROFIT from the channel means the reference exchange hit target — not
+        «cancel our TP and market-exit at a worse BingX price».
+
+        Sync exchange state first; only force-exit when the position is still open
+        and there is no working TP limit on BingX.
+        """
+        from freqtrade.persistence import Trade
+
+        pair = trade.pair
+        is_tp = signal_type == SignalType.TAKE_PROFIT
+
+        # 1) Refresh orders/position from BingX (TP may already be filled)
+        try:
+            self.bot.handle_onexchange_order(trade)
+            Trade.session.refresh(trade)
+        except Exception as e:
+            logger.warning(f"Signal exit: handle_onexchange_order failed for trade {trade.id}: {e}")
+
+        if not trade.is_open:
+            self.store.mark_status(key, "active")
+            logger.info(
+                f"Signal {signal_type.value} for trade {trade.id} ({pair}): "
+                f"already closed on exchange (exit={trade.exit_reason})."
+            )
+            return
+
+        open_tp_orders = [
+            o
+            for o in trade.orders
+            if o.ft_order_side == trade.exit_side
+            and o.ft_is_open
+            and (o.order_type or "").lower() == "limit"
+        ]
+
+        if is_tp and open_tp_orders:
+            for tp_o in open_tp_orders:
+                try:
+                    ex_order = self.bot.exchange.fetch_order(tp_o.order_id, pair)
+                    if ex_order.get("status") in ("closed", "filled") and float(
+                        ex_order.get("filled") or 0
+                    ) > 0:
+                        self.bot.update_trade_state(trade, tp_o.order_id, ex_order)
+                        Trade.commit()
+                        Trade.session.refresh(trade)
+                        if not trade.is_open:
+                            self.store.mark_status(key, "active")
+                            logger.info(
+                                f"Signal TAKE_PROFIT: trade {trade.id} closed via TP "
+                                f"order {tp_o.order_id}."
+                            )
+                            return
+                except Exception as e:
+                    logger.debug(f"Signal exit: could not refresh TP {tp_o.order_id}: {e}")
+
+            self.store.mark_status(key, "active")
+            logger.info(
+                f"Signal TAKE_PROFIT for trade {trade.id} ({pair}): "
+                f"TP limit still open ({len(open_tp_orders)} order(s)) — "
+                f"not calling force_exit (avoids canceling TP at target price)."
+            )
+            return
+
+        # STOP_LOSS or no TP on book: market exit is appropriate
+        try:
+            self.bot.rpc._rpc._rpc_force_exit(str(trade.id))
+        except Exception as e:
+            logger.warning(
+                f"Note: _rpc_force_exit raised an exception "
+                f"(often safe to ignore if trade actually closed): {e}"
+            )
+
+        self.store.mark_status(key, "active")
+        logger.info(f"Exit sent for trade {trade.id} ({signal_type.value}).")
 
     def _sync_trade_statuses(self):
         """

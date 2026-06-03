@@ -198,46 +198,39 @@ class SignalOnlyStrategy(IStrategy):
                 if not has_position:
                     logger.warning(f"BINGX RECONCILE: Trade {trade.id} ({trade.pair}) has NO position on exchange (age: {trade_age_seconds:.0f}s). FORCE CLOSING.")
                     
-                    # --- Find ACTUAL close price (critical for accurate statistics) ---
-                    actual_close_rate = None
+                    actual_close_rate, close_src = self._bingx_resolve_close_rate_when_position_gone(
+                        trade, api
+                    )
+                    if actual_close_rate:
+                        logger.info(
+                            f"BINGX RECONCILE: Close price for {trade.pair}: {actual_close_rate} "
+                            f"(source={close_src})"
+                        )
                     
-                    # 1. Try to get the real exit price from BingX order history
-                    try:
-                        closed_orders = api.fetch_closed_orders(trade.pair, limit=20)
-                        expected_exit_side = 'sell' if not trade.is_short else 'buy'
-                        for co in reversed(closed_orders):  # most recent first
-                            if co.get('status') == 'closed' and float(co.get('filled', 0) or 0) > 0:
-                                co_side = str(co.get('side', '')).lower()
-                                if co_side == expected_exit_side:
-                                    price = co.get('average') or co.get('price')
-                                    if price and float(price) > 0:
-                                        actual_close_rate = float(price)
-                                        logger.info(f"BINGX RECONCILE: Found actual close price from order history for {trade.pair}: {actual_close_rate}")
-                                        break
-                    except Exception as e_hist:
-                        logger.debug(f"BINGX RECONCILE: Could not fetch order history for {trade.pair}: {e_hist}")
-                    
-                    # 2. Fallback: current market price (close to reality)
-                    if not actual_close_rate:
-                        try:
-                            ticker = api.fetch_ticker(trade.pair)
-                            actual_close_rate = float(ticker.get('last', 0))
-                            if actual_close_rate > 0:
-                                logger.info(f"BINGX RECONCILE: Using current market price for {trade.pair}: {actual_close_rate}")
-                            else:
-                                actual_close_rate = None
-                        except Exception as e_tick:
-                            logger.debug(f"BINGX RECONCILE: Could not fetch ticker for {trade.pair}: {e_tick}")
-                    
-                    # 3. Last resort: open_rate (profit = 0, not ideal but won't crash)
                     if not actual_close_rate:
                         actual_close_rate = trade.open_rate
-                        logger.warning(f"BINGX RECONCILE: Using open_rate as last resort for {trade.pair} — statistics may be inaccurate!")
-                    
+                        close_src = "open_rate_fallback"
+                        logger.warning(
+                            f"BINGX RECONCILE: Using open_rate as last resort for {trade.pair} "
+                            f"— statistics may be inaccurate!"
+                        )
+
                     trade.close_rate = actual_close_rate
                     trade.close_date = datetime.now(timezone.utc)
                     trade.is_open = False
-                    trade.exit_reason = "reconciled_missing_position"
+                    if close_src.startswith("trade_order_limit"):
+                        trade.exit_reason = "take_profit"
+                    else:
+                        trade.exit_reason = "reconciled_missing_position"
+                        for o in trade.orders:
+                            if (
+                                o.ft_order_side == trade.exit_side
+                                and (o.order_type or "").lower() == "limit"
+                                and o.price
+                                and abs((trade.close_rate or 0) - o.price) / o.price < 0.02
+                            ):
+                                trade.exit_reason = "take_profit"
+                                break
                     trade.recalc_trade_from_orders(is_closing=True)
                     expected_ratio = trade.calc_profit_ratio(actual_close_rate)
                     if trade.close_profit is None or trade.close_profit * expected_ratio < 0:
@@ -269,8 +262,24 @@ class SignalOnlyStrategy(IStrategy):
                     except Exception as e_clean:
                         logger.warning(f"BINGX RECONCILE: Failed to clean up remaining orders for {trade.pair}: {e_clean}")
                     
-                    # Mark all open orders for this trade as closed in DB
+                    # Sync exit orders from exchange before marking canceled
+                    ex = self.dp._exchange
                     for o in trade.orders:
+                        if o.ft_order_side != trade.exit_side:
+                            continue
+                        try:
+                            raw = api.fetch_order(str(o.order_id), trade.pair)
+                            if hasattr(ex, "_order_contracts_to_amount"):
+                                raw = ex._order_contracts_to_amount(raw)
+                            filled = float(raw.get("filled") or 0)
+                            if raw.get("status") in ("closed", "filled") and filled > 0:
+                                o.status = "closed"
+                                o.filled = filled
+                                o.average = raw.get("average") or raw.get("price") or o.price
+                                o.ft_is_open = False
+                                continue
+                        except Exception:
+                            pass
                         if o.ft_is_open:
                             o.ft_is_open = False
                             o.status = "canceled"
@@ -479,9 +488,9 @@ class SignalOnlyStrategy(IStrategy):
 
     def _bingx_rescale_contract_order_fills(self, trade: Trade) -> bool:
         """Fix Order.filled/amount persisted in contract steps (e.g. SOL 0.12 vs 4.19)."""
+        from freqtrade.exchange.bingx import Bingx
+
         mult = self._bingx_swap_qty_multiplier(trade.pair)
-        if mult <= 1.0:
-            return False
         changed = False
         ref_amount = float(trade.amount or 0)
         for order in trade.orders:
@@ -495,17 +504,91 @@ class SignalOnlyStrategy(IStrategy):
                 "average": order.average or order.price or trade.close_rate or trade.open_rate,
                 "cost": order.cost,
             }
-            from freqtrade.exchange.bingx import Bingx
-
-            if not Bingx._bingx_swap_order_amounts_are_contract_units(probe, mult):
+            scale = Bingx._bingx_swap_fill_scale_factor(probe)
+            if scale == 1.0 and mult > 1.0:
+                if Bingx._bingx_swap_order_amounts_are_contract_units(probe, mult):
+                    scale = mult
+            if scale == 1.0:
                 continue
-            order.filled = filled * mult
+            order.filled = filled * scale
             if amount > 0:
-                order.amount = amount * mult
+                order.amount = amount * scale
             if order.remaining:
-                order.remaining = float(order.remaining) * mult
+                order.remaining = float(order.remaining) * scale
             changed = True
         return changed
+
+    def _bingx_resolve_close_rate_when_position_gone(self, trade: Trade, api) -> tuple[float | None, str]:
+        """
+        Position gone on BingX but trade still open in DB — resolve real exit price.
+
+        Prefer filled TP/exit orders registered on the trade (not a random recent buy).
+        """
+        ex = self.dp._exchange
+        exit_side = trade.exit_side
+        known_ids = {str(o.order_id) for o in trade.orders if o.order_id}
+
+        def _norm(order: dict) -> dict:
+            if hasattr(ex, "_order_contracts_to_amount"):
+                return ex._order_contracts_to_amount(order)
+            return order
+
+        # 1) Exit orders already linked to this trade
+        for o in trade.orders:
+            if o.ft_order_side != exit_side or not o.order_id:
+                continue
+            try:
+                raw = _norm(api.fetch_order(str(o.order_id), trade.pair))
+                filled = float(raw.get("filled") or 0)
+                if raw.get("status") in ("closed", "filled") and filled > 0:
+                    px = float(raw.get("average") or raw.get("price") or o.price or 0)
+                    if px > 0:
+                        tag = "trade_order_limit" if (o.order_type or "").lower() == "limit" else "trade_order"
+                        return px, f"{tag}_{o.order_id}"
+            except Exception as e:
+                logger.debug(f"BINGX RECONCILE: fetch_order {o.order_id}: {e}")
+
+        # 2) Closed-order history — only orders we know + best TP-like price for shorts
+        try:
+            closed_orders = [_norm(co) for co in api.fetch_closed_orders(trade.pair, limit=40)]
+            expected_side = "buy" if trade.is_short else "sell"
+            matched: list[tuple[float, str, float]] = []
+            for co in closed_orders:
+                if co.get("status") not in ("closed", "filled"):
+                    continue
+                if str(co.get("side", "")).lower() != expected_side:
+                    continue
+                filled = float(co.get("filled") or 0)
+                if filled <= 0:
+                    continue
+                oid = str(co.get("id", ""))
+                if known_ids and oid not in known_ids:
+                    continue
+                px = float(co.get("average") or co.get("price") or 0)
+                if px <= 0:
+                    continue
+                matched.append((px, oid, filled))
+
+            if matched:
+                if trade.is_short:
+                    # Short cover buy: lower price = better exit (TP side)
+                    px, oid, _ = min(matched, key=lambda x: x[0])
+                else:
+                    px, oid, _ = max(matched, key=lambda x: x[0])
+                return px, f"order_{oid}"
+        except Exception as e_hist:
+            logger.debug(f"BINGX RECONCILE: fetch_closed_orders {trade.pair}: {e_hist}")
+
+        # 3) Market ticker (last resort before open_rate)
+        try:
+            ticker = api.fetch_ticker(trade.pair)
+            px = float(ticker.get("last") or 0)
+            if px > 0:
+                return px, "ticker_last"
+        except Exception as e_tick:
+            logger.debug(f"BINGX RECONCILE: fetch_ticker {trade.pair}: {e_tick}")
+
+        return None, "unknown"
 
     def _bingx_repair_open_trade_value(self, trade: Trade) -> bool:
         """Fix stale open_trade_value that inflates unrealized PnL (e.g. SOL -77% vs -11%)."""
