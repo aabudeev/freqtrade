@@ -31,6 +31,8 @@ class SignalWorker:
         
         # Entry range retry tracker: {signal_key: {'count': N, 'last_ts': timestamp}}
         self._range_retries: dict = {}
+        # Avoid duplicate Telegram close notifications per trade id
+        self._trade_close_notified: set[int] = set()
 
     def process_once(self) -> int:
         """
@@ -517,6 +519,94 @@ class SignalWorker:
             if not is_emergency:
                 raise e
 
+    def _exit_close_label(self, trade, via: str) -> tuple[str, str]:
+        """Human label + emoji for Telegram close notification."""
+        er = (trade.exit_reason or "").lower()
+        profit = float(trade.close_profit or 0.0)
+        if "stop" in er:
+            return "Stop Loss", "🛑"
+        if "take_profit" in er:
+            return "Take Profit", "🎯"
+        if via.startswith("signal") and "tp" in via:
+            return "Take Profit (from signal)", "🎯"
+        if via.startswith("signal") and "sl" in via:
+            return "Stop Loss (from signal)", "🛑"
+        if profit >= 0 and er in ("exit", "sold_on_exchange", "force_exit", ""):
+            return "Take Profit", "🎯"
+        if "reconciled" in er:
+            return "Reconcile", "🔄"
+        if "force_exit" in er:
+            return "Force Exit", "⚡"
+        return trade.exit_reason or "Exit", ("🟢" if profit >= 0 else "🔴")
+
+    def _notify_trade_closed(
+        self,
+        trade,
+        *,
+        signal_key: str | None = None,
+        via: str = "exchange",
+    ) -> None:
+        """
+        Telegram: trade is closed (TP/SL on exchange or triggered by channel signal).
+        Duplicates per `trade.id` are not sent.
+        """
+        if trade.id in self._trade_close_notified:
+            return
+        if not self.bot or not getattr(self.bot, "rpc", None):
+            return
+
+        from freqtrade.persistence import Trade
+
+        Trade.session.refresh(trade)
+        if trade.is_open:
+            return
+
+        # Нативное EXIT_FILL (как entry_fill), если включено в notification_settings
+        try:
+            exit_order = next(
+                (
+                    o
+                    for o in reversed(trade.orders)
+                    if o.ft_order_side == trade.exit_side and (o.filled or 0) > 0
+                ),
+                None,
+            )
+            order_type = (exit_order.order_type if exit_order else None) or "limit"
+            self.bot._notify_exit(trade, order_type, fill=True)
+        except Exception as e:
+            logger.debug(f"Native exit notify skipped for trade {trade.id}: {e}")
+
+        label, emoji = self._exit_close_label(trade, via)
+        via_map = {
+            "exchange": "exchange (TP/SL filled)",
+            "signal_tp": "signal TAKE_PROFIT",
+            "signal_sl": "signal STOP_LOSS",
+        }
+        via_text = via_map.get(via, via)
+        profit_ratio = float(trade.close_profit or 0.0)
+        profit_abs = float(trade.close_profit_abs or trade.realized_profit or 0.0)
+        stake = trade.stake_currency or "USDT"
+        close_rate = trade.close_rate or 0.0
+        open_rate = trade.open_rate or 0.0
+
+        msg = (
+            f"{emoji} *Trade closed: {trade.pair}* (#{trade.id})\n"
+            f"Result: `{label}` · {via_text}\n"
+            f"Entry: `{open_rate}` → Exit: `{close_rate}`\n"
+            f"P/L: `{profit_ratio:.2%}` (`{profit_abs:.4f}` {stake})"
+        )
+        if signal_key:
+            msg += f"\nSignal: `{signal_key}`"
+        if trade.exit_reason:
+            msg += f"\nExit reason: `{trade.exit_reason}`"
+
+        try:
+            self.bot.rpc.send_msg({"type": RPCMessageType.STATUS, "status": msg})
+            self._trade_close_notified.add(trade.id)
+            logger.info(f"Close notification sent for trade {trade.id} ({via})")
+        except Exception as e:
+            logger.error(f"Failed to send close notification for trade {trade.id}: {e}")
+
     def _handle_signal_exit(self, trade, signal_type: SignalType, key: str) -> None:
         """
         TAKE_PROFIT from the channel means the reference exchange hit target — not
@@ -538,6 +628,8 @@ class SignalWorker:
             logger.warning(f"Signal exit: handle_onexchange_order failed for trade {trade.id}: {e}")
 
         if not trade.is_open:
+            via = "signal_tp" if is_tp else "signal_sl"
+            self._notify_trade_closed(trade, signal_key=key, via=via)
             self.store.mark_status(key, "active")
             logger.info(
                 f"Signal {signal_type.value} for trade {trade.id} ({pair}): "
@@ -564,6 +656,7 @@ class SignalWorker:
                         Trade.commit()
                         Trade.session.refresh(trade)
                         if not trade.is_open:
+                            self._notify_trade_closed(trade, signal_key=key, via="exchange")
                             self.store.mark_status(key, "active")
                             logger.info(
                                 f"Signal TAKE_PROFIT: trade {trade.id} closed via TP "
@@ -591,6 +684,10 @@ class SignalWorker:
             )
 
         self.store.mark_status(key, "active")
+        Trade.session.refresh(trade)
+        if not trade.is_open:
+            via = "signal_tp" if is_tp else "signal_sl"
+            self._notify_trade_closed(trade, signal_key=key, via=via)
         logger.info(f"Exit sent for trade {trade.id} ({signal_type.value}).")
 
     def _sync_trade_statuses(self):
@@ -639,22 +736,7 @@ class SignalWorker:
                     logger.info(f"Trade for signal {key} closed ({exit_reason}). Status: {new_status}")
                     self.store.mark_status(key, new_status, f"Trade closed: {exit_reason}")
                     
-                    # Manual Telegram notification for exit
-                    if self.bot and hasattr(self.bot, 'rpc') and self.bot.rpc:
-                        try:
-                            side_emoji = "🟢" if profit_pct >= 0 else "🔴"
-                            msg = (
-                                f"{side_emoji} *Trade Closed: {trade.pair}*\n"
-                                f"Reason: `{exit_reason}`\n"
-                                f"Profit: `{profit_pct:.2%}`\n"
-                                f"Signal Key: `{key}`"
-                            )
-                            self.bot.rpc.send_msg({
-                                'type': RPCMessageType.STATUS,
-                                'status': msg
-                            })
-                        except Exception as e_msg:
-                            logger.error(f"Failed to send exit notification: {e_msg}")
+                    self._notify_trade_closed(trade, signal_key=key, via="exchange")
 
         except Exception as e:
             logger.error(f"Error during trade status synchronization: {e}")
@@ -954,6 +1036,12 @@ class SignalWorker:
                         new_status = "expired"
 
                 if new_status and new_status != sig['status']:
+                    if new_status.startswith("closed(") and trade:
+                        self._notify_trade_closed(
+                            trade,
+                            signal_key=sig["idempotency_key"],
+                            via="exchange",
+                        )
                     self.store.mark_status(sig['idempotency_key'], new_status)
                     logger.info(f"SYNC: Updated signal {sig['idempotency_key']} status to {new_status}")
                     
@@ -1025,8 +1113,8 @@ class SignalWorker:
                 
                 self.process_once()
                 
-                # Sync signal statuses every 120 seconds
-                if now - last_sync > 120:
+                # Sync signal statuses every 60 seconds (faster close notifications)
+                if now - last_sync > 60:
                     self._sync_signal_statuses()
                     last_sync = now
                 
